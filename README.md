@@ -72,7 +72,19 @@ Then:
 
 **Install (once):**
 
-1. Copy this repository to the machine that runs Virtuoso, for example to `~/adc-output-diagnosis`.
+1. Put this repository in your home directory on the machine that runs Virtuoso:
+   ```
+   cd ~
+   git clone https://github.com/jiefu1-dot/adc-output-diagnosis.git
+   ```
+   If `git` is not installed, download the ZIP instead:
+   ```
+   cd ~
+   wget https://github.com/jiefu1-dot/adc-output-diagnosis/archive/refs/heads/main.zip
+   unzip main.zip
+   mv adc-output-diagnosis-main adc-output-diagnosis
+   ```
+   If the machine has no internet access, use **Code → Download ZIP** on this page and copy the ZIP over.
 2. In the CIW, type the line below and press Enter:
    ```
    load("~/adc-output-diagnosis/virtuoso/adc_diag.il")
