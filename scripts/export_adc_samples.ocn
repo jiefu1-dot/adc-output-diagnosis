@@ -1,0 +1,34 @@
+;; export_adc_samples.ocn
+;; Export ADC output samples from a finished transient simulation, one value per line,
+;; so the file can be opened in index.html (ADC Output Diagnosis).
+;;
+;; Usage:
+;;   1. Edit the settings below.
+;;   2. In the Virtuoso CIW:   load("/path/to/export_adc_samples.ocn")
+;;      or from a terminal:    ocean -nograph -restore export_adc_samples.ocn
+;;
+;; Notes:
+;;   - The transient run must reach at least wbT0 + wbN / wbFs.
+;;   - Pick wbT0 where the output has settled, e.g. half a clock period after the output updates.
+;;   - wbNet should be the reconstructed output (code or voltage). If your ADC only has
+;;     separate output bits, combine them into one signal first.
+
+;; ---------- settings ----------
+wbPsf = "/home/you/simulation/TOP_tb/spectre/schematic/psf"  ; results directory of the transient run
+wbNet = "/TOP/DOUT"            ; ADC output signal
+wbFs  = 6.4e9                  ; sample rate in Hz
+wbT0  = 10e-9                  ; first sampling instant in s
+wbN   = 32768                  ; number of samples (a power of 2 is recommended)
+wbOut = "/tmp/adc_samples.txt" ; output file
+
+;; ---------- export ----------
+openResults(wbPsf)
+selectResult('tran)
+wbW  = VT(wbNet)
+wbTs = 1.0 / wbFs
+wbFp = outfile(wbOut "w")
+for(wbI 0 wbN-1
+  fprintf(wbFp "%.9g\n" float(value(wbW wbT0 + wbI * wbTs)))
+)
+close(wbFp)
+printf("wrote %d samples to %s\n" wbN wbOut)

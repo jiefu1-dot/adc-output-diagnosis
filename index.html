@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ADC Output Diagnosis</title>
+<meta name="description" content="Diagnose ADC output data in the browser: spur causes, interleaving mismatch per channel, sparkle codes, noise, and DNL/INL. No AI, no server.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: masthead, then a narrow input column beside a wide results column (one column on phones). Datasheet look: cool neutrals, ink-blue accent, mono for every number. */
+:root{
+  --bg:#F1F3F6;--surface:#FFFFFF;--surface-2:#E9EDF2;--line:#D5DBE3;--line-strong:#B7C0CB;
+  --fg:#131920;--muted:#566170;--faint:#808A97;
+  --accent:#1C58B5;--accent-ink:#FFFFFF;--accent-soft:#DDE7F7;
+  --pass:#17784A;--pass-soft:#DAEEE2;--fail:#BC2B2B;--fail-soft:#F7DFDC;--warn:#8F5E0E;--warn-soft:#F4E8D0;
+  --grid:#E3E7ED;--code:#F6F8FA;--shadow:0 1px 2px rgba(19,25,32,.05),0 3px 12px rgba(19,25,32,.04);
+  --f-display:"IBM Plex Sans Condensed","IBM Plex Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --f-body:"IBM Plex Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"PingFang SC","Microsoft YaHei",monospace;
+  --r:8px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1217;--surface:#161B22;--surface-2:#1D232C;--line:#2A323D;--line-strong:#3D4754;
+  --fg:#E2E7EE;--muted:#9AA4B2;--faint:#76808D;
+  --accent:#6B9FF0;--accent-ink:#0B1424;--accent-soft:#1B2A44;
+  --pass:#4FC283;--pass-soft:#14301F;--fail:#F2746C;--fail-soft:#3B1C1B;--warn:#E3AD52;--warn-soft:#352A18;
+  --grid:#222932;--code:#11161C;--shadow:none;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1217;--surface:#161B22;--surface-2:#1D232C;--line:#2A323D;--line-strong:#3D4754;
+  --fg:#E2E7EE;--muted:#9AA4B2;--faint:#76808D;
+  --accent:#6B9FF0;--accent-ink:#0B1424;--accent-soft:#1B2A44;
+  --pass:#4FC283;--pass-soft:#14301F;--fail:#F2746C;--fail-soft:#3B1C1B;--warn:#E3AD52;--warn-soft:#352A18;
+  --grid:#222932;--code:#11161C;--shadow:none;color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14.5px/1.55 var(--f-body);-webkit-text-size-adjust:100%}
+.wrap{max-width:1240px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3,h4{text-wrap:balance}
+code{font-family:var(--f-mono);font-size:.92em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+
+.masthead{border-bottom:1px solid var(--line);background:var(--surface)}
+.masthead .wrap{padding-block:20px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.brand svg{flex:none}
+.mk-a{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linecap:round}
+.mk-b{fill:var(--fail)}
+h1{margin:0;font:600 23px/1.15 var(--f-display)}
+.eyebrow{margin:3px 0 0;font:400 12px var(--f-mono);color:var(--muted)}
+.privacy{margin:0;font-size:12.5px;color:var(--muted);max-width:44ch}
+
+main.wrap{padding-block:20px 32px}
+.grid2{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);grid-template-areas:"in" "out" "extra"}
+.col-in{grid-area:in}.col-out{grid-area:out}.col-extra{grid-area:extra}
+@media (min-width:960px){.grid2{grid-template-columns:minmax(300px,350px) minmax(0,1fr);grid-template-areas:"in out" "extra out";grid-template-rows:auto 1fr;align-items:start}}
+.col-in,.col-out,.col-extra{display:flex;flex-direction:column;gap:16px;min-width:0}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;min-width:0}
+.card-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+h3{margin:0;font:600 13px/1.3 var(--f-display);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+h4{margin:0;font:600 14.5px/1.35 var(--f-body)}
+.hint{margin:0;font-size:12.5px;color:var(--muted)}
+.badge{font:500 11px var(--f-mono);padding:2px 8px;border-radius:999px;background:var(--warn-soft);color:var(--warn)}
+.empty p{margin:0;color:var(--muted)}
+
+textarea,input[type=text],select{font:13px var(--f-body);color:var(--fg);background:var(--surface);border:1px solid var(--line-strong);border-radius:6px;padding:6px 8px;min-width:0;width:100%}
+textarea{font:12.5px/1.5 var(--f-mono);background:var(--code);border-color:var(--line);padding:10px;resize:vertical;min-height:200px}
+textarea.drag{outline:2px dashed var(--accent);outline-offset:2px}
+input[type=text]{font-family:var(--f-mono);font-size:12.5px}
+textarea:focus,input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:12.5px;color:var(--muted)}
+.field-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font:500 13px var(--f-body);padding:7px 12px;border-radius:6px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn-sm{padding:4px 9px;font-size:12px}
+.row-btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+.verdict{margin:0;font-size:15.5px;line-height:1.55}
+.verdict.sm{font-size:14px}
+.bad{color:var(--fail)}.good{color:var(--pass)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px}
+.stat{background:var(--surface-2);border-radius:6px;padding:8px 10px;min-width:0}
+.stat .k{font:500 11.5px var(--f-mono);color:var(--muted)}
+.stat .v{font:600 21px/1.2 var(--f-display);font-variant-numeric:tabular-nums}
+.stat .u{font:400 12px var(--f-mono);color:var(--muted);margin-left:3px}
+.notes{margin:0;padding:8px 12px 8px 28px;background:var(--warn-soft);color:var(--warn);border-radius:6px;font-size:13px;display:flex;flex-direction:column;gap:3px}
+
+.chart-host{min-width:0;width:100%}
+.chart{display:block;max-width:100%}
+.chart .ax{stroke:var(--line-strong);stroke-width:1}
+.chart .gridl{stroke:var(--grid);stroke-width:1}
+.chart .tick{fill:var(--muted);font:11px var(--f-mono)}
+.chart .lbl{fill:var(--fg);font:500 11px var(--f-mono)}
+.chart .lbl-m{fill:var(--muted);font:10.5px var(--f-mono)}
+.chart .lbl-bad{fill:var(--fail)}
+.chart .spectrum{fill:none;stroke:var(--accent);stroke-width:1.1;stroke-linejoin:round}
+.chart .spec-area{fill:var(--accent-soft);opacity:.7}
+.chart .il{stroke:var(--warn);stroke-width:1;stroke-dasharray:3 4;opacity:.8}
+.chart .mk-sig{fill:var(--pass);stroke:var(--surface);stroke-width:1.5}
+.chart .mk-sp{fill:var(--fail);stroke:var(--surface);stroke-width:1.5}
+.chart .bar{fill:var(--accent);opacity:.75}
+.chart .bar-hot{fill:var(--fail)}
+.chart .zero{stroke:var(--fg);stroke-width:1;opacity:.5}
+.chart .env{stroke:var(--accent);stroke-width:1;fill:none;opacity:.85}
+.chart .env-line{stroke:var(--accent);stroke-width:1.4;fill:none}
+.chart .guide{stroke:var(--fail);stroke-width:1;stroke-dasharray:4 3;opacity:.8}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.legend i.l-sig{background:var(--pass)}.legend i.l-fail{background:var(--fail)}
+.legend i.l-il{background:none;border-left:2px dashed var(--warn);border-radius:0;width:2px}
+
+.mm-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.mm{display:flex;flex-direction:column;gap:4px;min-width:0}
+.mm-h{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+.mm-h b{font:600 13px var(--f-body)}
+.mm-h span{font:500 12px var(--f-mono);color:var(--muted)}
+
+.fixes{display:flex;flex-direction:column;gap:7px}
+.fx{display:grid;grid-template-columns:9.5em minmax(0,1fr) 7.2em;gap:10px;align-items:center;font-size:13.5px}
+.fx-bar{height:14px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.fx-bar i{display:block;height:100%;background:var(--line-strong);border-radius:3px}
+.fx.best .fx-bar i{background:var(--accent)}
+.fx.all .fx-bar i{background:var(--pass)}
+.fx-v{font:500 12.5px var(--f-mono);text-align:right;font-variant-numeric:tabular-nums}
+.fx-v small{color:var(--muted);font-size:11.5px}
+.fx.best .fx-l{font-weight:600}
+
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;max-width:100%}
+.tbl-wrap table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+.tbl-wrap th,.tbl-wrap td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.tbl-wrap tbody tr:last-child td{border-bottom:0}
+.tbl-wrap th:first-child,.tbl-wrap td:first-child{text-align:left}
+.tbl-wrap thead th{background:var(--surface-2);font-weight:600;font-size:12px}
+.tbl-wrap td{font-family:var(--f-mono);font-size:12.5px}
+.tbl-wrap td.txt{font-family:var(--f-body);text-align:left;white-space:normal;min-width:200px}
+.tbl-wrap td.hot{color:var(--fail);font-weight:600}
+#cm-out .tbl-wrap th,#cm-out .tbl-wrap td{padding:6px 7px;white-space:normal}
+#cm-out .tbl-wrap td:first-child{font-family:var(--f-body);font-size:12.5px;position:static}
+
+.advice{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.adv{border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.adv p{margin:0;font-size:13.5px}
+.adv ol,.method ol{margin:0;padding-left:20px;font-size:13.5px;display:flex;flex-direction:column;gap:4px}
+.adv .now{font-size:13px;color:var(--accent);font-weight:500}
+.sub{font:600 12px var(--f-body);color:var(--muted);margin-bottom:3px}
+details{border-top:1px solid var(--line);padding-top:8px}
+summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:500}
+details[open] summary{margin-bottom:8px}
+.method p{margin:0 0 8px;font-size:13.5px}
+.method li b{font-family:var(--f-mono);font-weight:600}
+
+.find{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.find li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px;align-items:baseline;padding:9px 0;border-top:1px solid var(--line)}
+.find li b{font-weight:600;font-size:14px}
+.find li p{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.sev{font:600 11px var(--f-body);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.sev.high{background:var(--fail-soft);color:var(--fail)}.sev.mid{background:var(--warn-soft);color:var(--warn)}
+.sev.ok{background:var(--pass-soft);color:var(--pass)}.sev.info{background:var(--surface-2);color:var(--muted)}
+.gain{font:600 12.5px var(--f-mono);color:var(--accent);white-space:nowrap}
+.plain{margin:0;padding-left:20px;font-size:13.5px;display:flex;flex-direction:column;gap:4px}
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;z-index:20;max-width:calc(100% - 32px)}
+.foot{padding-block:0 28px;color:var(--muted);font-size:12px}
+.foot p{margin:0;max-width:80ch}
+.foot p+p{margin-top:6px}
+</style>
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+        <path class="mk-a" d="M3 34H37M6 34V31M10 34V30M14 34V31M18 34V6M22 34V31M26 34V22M30 34V31M34 34V27"/>
+        <circle class="mk-b" cx="26" cy="20" r="2.6"/><circle class="mk-b" cx="34" cy="25" r="2.2"/>
+      </svg>
+      <div>
+        <h1>ADC Output Diagnosis</h1>
+        <p class="eyebrow">FFT · spurs · interleaving mismatch · sparkle codes · noise · DNL / INL</p>
+      </div>
+    </div>
+    <p class="privacy">No AI and no trained model, only fixed signal-processing rules. Everything runs in your browser, and your data is never uploaded.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid2">
+    <div class="col-in">
+      <div class="card">
+        <div class="card-h"><h3>ADC output data</h3><span class="badge" id="d-badge">Example data</span></div>
+        <textarea id="d-text" spellcheck="false" aria-label="ADC output data"></textarea>
+        <div class="row-btns">
+          <label class="btn" for="d-file">Open file</label><input type="file" id="d-file" accept=".csv,.tsv,.txt" hidden>
+          <button class="btn" type="button" id="d-load">Load example</button>
+        </div>
+        <p class="hint">One value per line (output code or voltage), in sampling order. Two columns (time, value) also work; the last column is used. You can also drop a file onto the box. The input must be a single sine wave. The example is an 8-channel, 10-bit, 6.4 GS/s interleaved ADC with several faults added on purpose. You can also load raw comparator bits: one string of 0/1 per line, MSB first, which suits SARs with redundancy.</p>
+      </div>
+      <div class="card" id="p-form">
+        <div class="card-h"><h3>Settings</h3></div>
+        <div class="field-row">
+          <div class="field"><label for="p-fs">Sample rate Fs</label><input type="text" id="p-fs" inputmode="decimal" placeholder="6.4G"></div>
+          <div class="field"><label for="p-bits">Bits</label><input type="text" id="p-bits" inputmode="numeric" placeholder="blank = dBc"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="p-m">Interleaved channels M</label><input type="text" id="p-m" inputmode="numeric" placeholder="1 = not interleaved"></div>
+          <div class="field"><label for="p-h">Harmonics to count</label><input type="text" id="p-h" inputmode="numeric" placeholder="5"></div>
+        </div>
+        <div class="field"><label for="p-fin">Actual input frequency (only when undersampling)</label><input type="text" id="p-fin" inputmode="decimal" placeholder="optional"></div>
+        <div class="field"><label for="p-wts">Nominal bit weights (only for raw comparator bits, MSB first, optional)</label><input type="text" id="p-wts" placeholder="512 256 128 64 …"></div>
+        <div class="field"><label for="p-win">Window</label>
+          <select id="p-win">
+            <option value="bh4">Blackman-Harris (recommended)</option>
+            <option value="hann">Hann</option>
+            <option value="rect">Rectangular (coherent sampling only)</option>
+          </select>
+        </div>
+        <p class="hint">For an ordinary ADC, set M to 1. For an interleaved ADC, set M to the number of channels. Example: with 8 phases × 4 sub-ADCs, use 8 to compare the phases, or 32 to see every sub-ADC.</p>
+        <p class="hint">Values accept SI prefixes: 6.4G, 985.9M, 10n.</p>
+      </div>
+    </div>
+    <div class="col-extra">
+      <div class="card" id="cm-card">
+        <div class="card-h"><h3>SAR capacitor-mismatch estimate</h3></div>
+        <p class="hint">No data needed. Enter the unit-capacitor mismatch; many random capacitor arrays are generated to show how bad DNL, INL and ENOB can get. Useful for choosing the unit-capacitor size.</p>
+        <div class="field-row">
+          <div class="field"><label for="cm-bits">Bits</label><input type="text" id="cm-bits" inputmode="numeric" placeholder="10"></div>
+          <div class="field"><label for="cm-sig">Unit-cap mismatch σ (%)</label><input type="text" id="cm-sig" inputmode="decimal"></div>
+          <div class="field"><label for="cm-runs">Runs</label><input type="text" id="cm-runs" inputmode="numeric"></div>
+        </div>
+        <div class="row-btns"><button type="button" class="btn" id="cm-run">Run</button><button type="button" class="btn btn-sm" id="cm-use" hidden></button></div>
+        <div id="cm-out" class="col-out-inner"></div>
+      </div>
+      <div class="card method">
+        <div class="card-h"><h3>How it works</h3></div>
+        <p>There is no AI involved. Every result comes from fixed rules about how ADCs behave, so the same data always gives the same answer.</p>
+        <ol>
+          <li>Run an FFT and find the signal and the largest spurs. Then look at where each spur sits:
+            <br>at <b>multiples of fin</b> (folded back above Fs/2) → harmonics, circuit nonlinearity;
+            <br>at <b>k·Fs/M</b> → channel offset mismatch;
+            <br>at <b>k·Fs/M ± fin</b> → channel gain or timing mismatch.</li>
+          <li>Fit a sine wave (one per channel for an interleaved ADC). The DC term is the offset, the amplitude is the gain, and the phase is the sampling instant. Comparing each channel with the average gives its mismatch.</li>
+          <li>Subtract the fitted sine from every sample. A sample whose error is more than 7 times the typical error counts as a sparkle code. The typical error is the channel's noise.</li>
+          <li>Compare the noise with ideal quantization noise (0.29 LSB rms), and check whether the noise floor rises next to the signal or at low frequency.</li>
+          <li>Count how often each output code appears (code histogram) and compare it with what an ideal sine would give. This gives DNL and INL.</li>
+          <li>SAR bit weights: in a plain binary SAR, each binary digit of the output code is one comparator decision. A least-squares fit of these 0/1 bits together with a sine gives the true weight of each bit.</li>
+          <li>Remove each problem from the data and recompute SNDR, to show which fix is worth the most.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="col-out" id="res"></div>
+  </div>
+</main>
+
+<footer class="wrap foot">
+  <p>Needs a single-tone sine input, ideally with coherent sampling (input frequency = prime × Fs / N). An interleaved ADC needs at least 16 samples per channel. DNL / INL needs integer output codes and roughly 10 or more samples per code.</p>
+  <p>Also available as a Cadence Virtuoso menu: see <code>virtuoso/adc_diag.il</code> in the project repository. Not affiliated with Cadence Design Systems, Inc.; Cadence, Virtuoso, Spectre and OCEAN are its trademarks.</p>
+</footer>
+<div class="toast" id="toast" role="status" hidden></div>
+<!--ADC-DATA-HERE-->
+<script>
+'use strict';
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const fin=Number.isFinite;
+
+/* ---------- numbers ---------- */
+const SI={a:1e-18,f:1e-15,p:1e-12,n:1e-9,u:1e-6,'µ':1e-6,'μ':1e-6,m:1e-3,k:1e3,K:1e3,M:1e6,G:1e9,T:1e12};
+function parseNum(s){
+  if(s==null)return NaN;
+  s=String(s).trim().replace(/^["']|["']$/g,'');
+  if(!s)return NaN;
+  const m=s.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*([A-Za-zµμ]*)/);
+  if(!m)return NaN;
+  let v=parseFloat(m[1]);const u=m[2];
+  if(u){if(/^meg/i.test(u))v*=1e6;else if(Object.prototype.hasOwnProperty.call(SI,u[0]))v*=SI[u[0]];}
+  return v;
+}
+const PFX=[[1e12,'T'],[1e9,'G'],[1e6,'M'],[1e3,'k'],[1,''],[1e-3,'m'],[1e-6,'µ'],[1e-9,'n'],[1e-12,'p'],[1e-15,'f'],[1e-18,'a']];
+function tnum(s){if(s.includes('.')&&!/e/i.test(s))s=s.replace(/0+$/,'').replace(/\.$/,'');return s;}
+function fmt(v,sig=4){
+  if(v==null||!fin(v))return '—';
+  const a=Math.abs(v);if(a===0)return '0';
+  const p=v.toPrecision(sig);
+  if(a>=1e4||a<1e-2||/e/i.test(p)){for(const [s,x] of PFX){if(a>=s*0.99995)return tnum((v/s).toPrecision(sig))+x;}return v.toExponential(2);}
+  return tnum(p);
+}
+const pct=y=>fin(y)?(y*100).toFixed(y>=0.995&&y<1?2:1)+'%':'—';
+function niceTicks(lo,hi,n=5){
+  const span=hi-lo;if(!(span>0))return [lo];
+  const s0=span/n,mag=Math.pow(10,Math.floor(Math.log10(s0))),e=s0/mag;
+  const step=(e>=7.5?10:e>=3.5?5:e>=1.5?2:1)*mag;const t=[];
+  for(let v=Math.ceil(lo/step)*step;v<=hi+step*1e-9;v+=step)t.push(+v.toPrecision(12));
+  return t;
+}
+function wilson(k,n,z=1.96){if(!n)return [NaN,NaN];const p=k/n,d=1+z*z/n,c=p+z*z/(2*n),h=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n));return [Math.max(0,(c-h)/d),Math.min(1,(c+h)/d)];}
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function gauss(r){let u=0,v=0;while(!u)u=r();while(!v)v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function windowFn(type,N){const w=new Float64Array(N);for(let n=0;n<N;n++){const t=2*Math.PI*n/N;w[n]=type==='rect'?1:type==='hann'?0.5-0.5*Math.cos(t):0.35875-0.48829*Math.cos(t)+0.14128*Math.cos(2*t)-0.01168*Math.cos(3*t);}return w;}
+function fftInPlace(re,im){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){let bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}}
+  for(let len=2;len<=n;len<<=1){const h=len>>1;const ang=-2*Math.PI/len;
+    for(let j=0;j<h;j++){const cr=Math.cos(ang*j),ci=Math.sin(ang*j);
+      for(let i=j;i<n;i+=len){const b=i+h;const xr=re[b]*cr-im[b]*ci,xi=re[b]*ci+im[b]*cr;re[b]=re[i]-xr;im[b]=im[i]-xi;re[i]+=xr;im[i]+=xi;}}}
+}
+function dftHalf(x){const N=x.length,h=N>>1;const c=new Float64Array(N),s=new Float64Array(N);for(let i=0;i<N;i++){c[i]=Math.cos(2*Math.PI*i/N);s[i]=Math.sin(2*Math.PI*i/N);}const re=new Float64Array(h+1),im=new Float64Array(h+1);for(let k=0;k<=h;k++){let r=0,q=0,idx=0;for(let n=0;n<N;n++){r+=x[n]*c[idx];q-=x[n]*s[idx];idx+=k;if(idx>=N)idx-=N;}re[k]=r;im[k]=q;}return {re,im};}
+function parseSeries(text){const out=[];for(const l of String(text||'').replace(/\r/g,'').split('\n')){const t=l.trim();if(!t)continue;const parts=t.split(/[,\s;]+/).filter(Boolean);if(!parts.length)continue;const v=parseNum(parts[parts.length-1]);if(fin(v))out.push(v);}return out;}
+const isPrime=n=>{if(n<2)return false;for(let i=2;i*i<=n;i++)if(n%i===0)return false;return true;};
+const WIN_NAME={bh4:'Blackman-Harris',hann:'Hann',rect:'Rectangular'};
+function computeFFT(x0,P){
+  let N=x0.length;const notes=[];
+  if(N<64)return {error:`Only ${N} samples. At least 64 are needed.`};
+  let x=x0;const pow2=n=>(n&(n-1))===0;
+  if(!pow2(N)&&N>8192){const n2=1<<Math.floor(Math.log2(N));x=x0.slice(0,n2);notes.push(`${N} samples is not a power of 2, so only the first ${n2} were used.`);N=n2;}
+  else if(!pow2(N))notes.push(`${N} samples is not a power of 2, so a plain DFT was used (same result, just slower).`);
+  const half=N>>1,w=windowFn(P.win,N);
+  let mean=0;for(let n=0;n<N;n++)mean+=x[n];mean/=N;
+  let sw=0,sw2=0;const xr=new Float64Array(N);
+  for(let n=0;n<N;n++){xr[n]=(x[n]-mean)*w[n];sw+=w[n];sw2+=w[n]*w[n];}
+  let RE,IM;if(pow2(N)){RE=xr;IM=new Float64Array(N);fftInPlace(RE,IM);}else{const d=dftHalf(xr);RE=d.re;IM=d.im;}
+  const Pw=new Float64Array(half+1);for(let k=0;k<=half;k++)Pw[k]=RE[k]*RE[k]+IM[k]*IM[k];
+  const span=({rect:0,hann:2,bh4:4})[P.win]??4;
+  const mask=new Uint8Array(half+1);for(let k=0;k<=Math.min(span,half);k++)mask[k]=1;
+  let kf=-1,pm=-1;for(let k=span+1;k<=half;k++)if(Pw[k]>pm){pm=Pw[k];kf=k;}
+  if(kf<0||!(pm>0))return {error:'No signal found. The data may be constant.'};
+  const lo=k=>Math.max(0,k-span),hi=k=>Math.min(half,k+span);
+  const alias=k=>{k=((k%N)+N)%N;return k>half?N-k:k;};
+  let Psig=0;for(let k=lo(kf);k<=hi(kf);k++)if(mask[k]!==1){mask[k]=2;Psig+=Pw[k];}
+  let Ptot=0;for(let k=0;k<=half;k++)if(mask[k]!==1)Ptot+=Pw[k];
+  let Pharm=0;
+  for(let h=2;h<=P.H;h++){const kh=alias(h*kf);for(let k=lo(kh);k<=hi(kh);k++)if(mask[k]===0){mask[k]=3;Pharm+=Pw[k];}}
+  const Pnd=Math.max(Ptot-Psig,1e-300);
+  const sndr=10*Math.log10(Psig/Pnd),snr=10*Math.log10(Psig/Math.max(Pnd-Pharm,1e-300));
+  const thd=Pharm>0?10*Math.log10(Pharm/Psig):-Infinity,enob=(sndr-1.76)/6.02;
+  const rest=[];for(let k=0;k<=half;k++)if(mask[k]===0)rest.push(Pw[k]);rest.sort((a,b)=>a-b);
+  const med=rest.length?rest[rest.length>>1]:Psig*1e-12;
+  const m2=new Uint8Array(half+1);for(let k=0;k<=half;k++)m2[k]=(mask[k]===1||mask[k]===2)?1:0;
+  const sumAround=kc=>{let p=0;for(let k=lo(kc);k<=hi(kc);k++)if(!m2[k])p+=Pw[k];return p;};
+  let kmax=-1,pmx=-1;for(let k=0;k<=half;k++)if(!m2[k]&&Pw[k]>pmx){pmx=Pw[k];kmax=k;}
+  const sfdr=kmax>=0?10*Math.log10(Psig/Math.max(sumAround(kmax),1e-300)):Infinity;
+  function classify(k){
+    const tol=span+1;
+    for(let h=2;h<=Math.max(P.H,7);h++)if(Math.abs(alias(h*kf)-k)<=tol)return {type:'harm',h};
+    if(P.M>1)for(let i=1;i<P.M;i++){const b=Math.round(i*N/P.M);if(Math.abs(alias(b)-k)<=tol)return {type:'offset',i};if(Math.abs(alias(b+kf)-k)<=tol||Math.abs(alias(b-kf)-k)<=tol)return {type:'gain',i};}
+    return {type:'other'};
+  }
+  const spurs=[];
+  for(let it=0;it<8;it++){
+    let kk=-1,pp=-1;for(let k=0;k<=half;k++)if(!m2[k]&&Pw[k]>pp){pp=Pw[k];kk=k;}
+    if(kk<0||pp<med*Math.pow(10,1.2))break;
+    const ps=sumAround(kk);
+    for(let k=Math.max(0,kk-span-1);k<=Math.min(half,kk+span+1);k++)m2[k]=1;
+    spurs.push({k:kk,p:ps,dbc:10*Math.log10(ps/Psig),cls:classify(kk)});
+  }
+  const Afs=P.bits>0?Math.pow(2,P.bits-1):null;
+  const Asig=Math.sqrt(4*Psig/(N*sw2));const ref=Afs||Asig;const kA=2/sw;
+  const db=new Float64Array(half+1);for(let k=0;k<=half;k++){const a=Math.sqrt(Pw[k])*kA;db[k]=a>0?20*Math.log10(a/ref):-300;}
+  const sigDb=20*Math.log10(Asig/ref);
+  const medDb=10*Math.log10(med)+20*Math.log10(kA/ref);
+  const yMax=Afs?Math.max(0,Math.ceil((sigDb+3)/10)*10):10;
+  const yMin=Math.max(-220,Math.min(yMax-60,Math.floor((medDb-15)/10)*10));
+  if(P.win==='rect'&&kf<half&&(Pw[kf-1]+Pw[kf+1])>Pw[kf]*1e-3)notes.push('Signal energy leaks into neighboring bins, so the sampling does not look coherent. Switch to the Blackman-Harris window, or change the input frequency as suggested below.');
+  if(Afs){
+    let mn=Infinity,mx=-Infinity;for(const v of x){if(v<mn)mn=v;if(v>mx)mx=v;}
+    const top=mn>=0?Math.pow(2,P.bits)-1:Afs-1,bot=mn>=0?0:-Afs;let nc=0;for(const v of x)if(v<=bot||v>=top)nc++;
+    if(nc>=3)notes.push(`${nc} samples hit full scale (clipping), which creates many harmonics. Reduce the input amplitude a little.`);
+    if(sigDb>1)notes.push('The signal is larger than full scale. The data may be voltages rather than output codes; clear "Bits".');
+    else if(sigDb<-20)notes.push(`The signal is only ${sigDb.toFixed(1)} dBFS, far below full scale. If the data are voltages rather than output codes, clear "Bits".`);
+  }
+  let pb=kf;for(let a=0;a<500;a++){if(isPrime(kf+a)&&kf+a<half){pb=kf+a;break;}if(kf-a>1&&isPrime(kf-a)){pb=kf-a;break;}}
+  const fsOk=fin(P.Fs)&&P.Fs>0;
+  return {Pw,mask,Asig,N,half,kf,span,Fs:P.Fs,fsOk,M:P.M,bits:P.bits,win:P.win,H:P.H,sndr,snr,sfdr,thd,enob,sigDb,db,yMin,yMax,spurs,notes,primeBin:pb,dbcMode:!Afs};
+}
+function causeText(c,R){
+  const base=i=>Math.min(i,R.M-i);
+  if(c.type==='harm')return `Harmonic ${c.h}: circuit nonlinearity`;
+  if(c.type==='offset')return `${base(c.i)}·Fs/${R.M}: channel offset mismatch`;
+  if(c.type==='gain')return `${base(c.i)}·Fs/${R.M} ± fin: channel gain or timing mismatch`;
+  return 'Not at a typical location: likely coupling or interference';
+}
+const ADVICE={
+  offset:{t:'Interleaving offset mismatch',d:'The sub-ADCs have different DC offsets. The spurs sit at multiples of Fs/M, independent of the input frequency.',fix:['Subtract each channel\'s own mean in the digital domain. This is the simplest offset calibration.','Check the symmetry of each channel\'s comparator and reference: layout matching and routing length.']},
+  gain:{t:'Interleaving gain / timing-skew mismatch',d:'The channels have different gains, or sample at slightly different instants (timing skew). The spurs sit at k·Fs/M ± fin.',fix:['Measure again at a higher input frequency. If the spurs grow, timing skew dominates; if they stay the same, gain mismatch dominates.','Timing skew: check that clock routes have equal length and equal drivers. Gain: check sampling-capacitor and reference matching.']},
+  harm:{t:'Harmonic distortion (nonlinearity)',d:'The signal path is not perfectly linear. The most common cause is a sampling switch whose on-resistance changes with the input voltage.',fix:['Measure again with the input 6 dB lower. If the harmonics drop a lot, the front end is the cause.','Use a bootstrapped sampling switch, or make the switch larger.']},
+  other:{t:'Other spurs',d:'Not at harmonic or interleaving locations. Likely clock, supply or substrate coupling, or a simulation time step that is too coarse.',fix:['Rerun the transient with a smaller maxstep and see if the spurs disappear.','Check whether another clock frequency is coupling in.']}
+};
+function spectrumSVG(R,W){
+  const H=Math.round(clamp(W*0.48,230,330)),pl=42,pr=12,pt=20,pb=30,pw=W-pl-pr,ph=H-pt-pb;
+  const X=k=>pl+(k/R.half)*pw,Y=d=>pt+(R.yMax-clamp(d,R.yMin,R.yMax))/(R.yMax-R.yMin)*ph;let s='';
+  const step=(R.yMax-R.yMin)>100?20:10;
+  for(let d=R.yMax;d>=R.yMin;d-=step){const y=Y(d);s+=`<line class="gridl" x1="${pl}" x2="${W-pr}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text class="tick" x="${pl-6}" y="${(y+4).toFixed(1)}" text-anchor="end">${d}</text>`;}
+  const fmax=R.fsOk?R.Fs/2:0.5;
+  niceTicks(0,fmax,W<440?3:5).forEach(f=>{const x=X(f/fmax*R.half);if(x>W-pr+0.5)return;s+=`<line class="gridl" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pt}" y2="${pt+ph}"/><text class="tick" x="${clamp(x,pl+8,W-pr-14).toFixed(1)}" y="${pt+ph+17}" text-anchor="middle">${R.fsOk?esc(fmt(f)):f}</text>`;});
+  if(R.M>1)for(let i=1;i<=Math.floor(R.M/2);i++){const k=i*R.N/R.M;if(k>R.half)break;const x=X(k).toFixed(1);s+=`<line class="il" x1="${x}" x2="${x}" y1="${pt}" y2="${pt+ph}"/>`;}
+  const cols=Math.max(1,Math.ceil(pw)),env=new Float64Array(cols+1).fill(-Infinity);
+  for(let k=1;k<=R.half;k++){const c=Math.round(k/R.half*pw);if(R.db[k]>env[c])env[c]=R.db[k];}
+  let d='',first=null,last=null;for(let c=0;c<=cols;c++){if(env[c]===-Infinity)continue;const x=(pl+c).toFixed(1);d+=(d?'L':'M')+x+','+Y(env[c]).toFixed(1);if(first===null)first=x;last=x;}
+  if(d)s+=`<path class="spec-area" d="${d}L${last},${pt+ph}L${first},${pt+ph}Z"/><path class="spectrum" d="${d}"/>`;
+  s+=`<line class="ax" x1="${pl}" x2="${W-pr}" y1="${pt+ph}" y2="${pt+ph}"/>`;
+  const xf=X(R.kf),yf=Y(R.db[R.kf]),right=xf>W-70;
+  s+=`<circle class="mk-sig" cx="${xf.toFixed(1)}" cy="${yf.toFixed(1)}" r="4"/><text class="lbl" x="${(xf+(right?-8:8)).toFixed(1)}" y="${(yf+4).toFixed(1)}" text-anchor="${right?'end':'start'}">fin</text>`;
+  R.spurs.slice(0,6).forEach((sp,i)=>{const x=X(sp.k),y=Y(R.db[sp.k]);s+=`<circle class="mk-sp" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5"/><text class="lbl lbl-bad" x="${x.toFixed(1)}" y="${Math.max(10,y-7).toFixed(1)}" text-anchor="middle">${i+1}</text>`;});
+  s+=`<text class="lbl-m" x="${pl}" y="12">${R.dbcMode?'dBc':'dBFS'}</text><text class="lbl-m" x="${W-pr}" y="12" text-anchor="end">${R.fsOk?'Frequency (Hz)':'Frequency (×Fs)'}</text>`;
+  return `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="ADC output spectrum">${s}</svg>`;
+}
+
+/* ---------- SAR: raw bits, bit-weight calibration, capacitor-mismatch model ---------- */
+function parseInput(text,wtsText){
+  const lines=String(text||'').replace(/\r/g,'').split('\n');
+  const toBits=l=>{const t=l.trim();if(!t)return null;if(/^[01]{4,}$/.test(t))return t.split('').map(Number);const p=t.split(/[,\s;]+/).filter(Boolean);if(p.length>=4&&p.every(v=>v==='0'||v==='1'))return p.map(Number);return undefined;};
+  let probe=0,hits=0,len=null;
+  for(const l of lines){const b=toBits(l);if(b===null)continue;probe++;if(b!==undefined){hits++;if(len==null)len=b.length;}if(probe>=20)break;}
+  if(!probe||hits!==probe)return {x:parseSeries(text),raw:null};
+  const B=len,rows=[];let bad=0;
+  for(const l of lines){const b=toBits(l);if(!b)continue;if(b.length!==B){bad++;continue;}rows.push(b);}
+  let wNom=String(wtsText||'').split(/[\s,;]+/).filter(Boolean).map(parseNum),wNote=null;
+  if(wNom.length!==B||wNom.some(v=>!fin(v))){if(wNom.length)wNote='len';wNom=[];for(let i=B-1;i>=0;i--)wNom.push(Math.pow(2,i));}
+  const N=rows.length,mat=new Uint8Array(N*B),x=new Array(N);
+  rows.forEach((r,n)=>{let s=0;for(let i=0;i<B;i++){mat[n*B+i]=r[i];s+=r[i]*wNom[i];}x[n]=s;});
+  return {x,raw:{mat,B,wNom,from:'bits',bad,wNote}};
+}
+function rawFromCodes(x,bits){
+  if(!(bits>0)||bits>20)return null;const N=x.length;let mn=Infinity;
+  for(let n=0;n<N;n++){if(Math.abs(x[n]-Math.round(x[n]))>1e-6)return null;if(x[n]<mn)mn=x[n];}
+  const off=mn<0?Math.pow(2,bits-1):0,top=Math.pow(2,bits);const B=bits,mat=new Uint8Array(N*B);
+  for(let n=0;n<N;n++){const u=Math.round(x[n])+off;if(u<0||u>=top)return null;for(let i=0;i<B;i++)mat[n*B+i]=(u>>(B-1-i))&1;}
+  const wNom=[];for(let i=B-1;i>=0;i--)wNom.push(Math.pow(2,i));
+  return {mat,B,wNom,from:'codes',off};
+}
+function solveN(A,b){
+  const n=b.length,M=A.map((r,i)=>[...r,b[i]]);
+  for(let i=0;i<n;i++){let p=i;for(let r=i+1;r<n;r++)if(Math.abs(M[r][i])>Math.abs(M[p][i]))p=r;const t=M[i];M[i]=M[p];M[p]=t;
+    if(Math.abs(M[i][i])<1e-9*Math.max(1,Math.abs(M[0][0])))return null;
+    for(let r=0;r<n;r++){if(r===i)continue;const f=M[r][i]/M[i][i];if(!f)continue;for(let c=i;c<=n;c++)M[r][c]-=f*M[i][c];}}
+  return M.map((r,i)=>r[n]/r[i]);
+}
+/* correct channel offset/gain/skew of y by refitting a sine per channel */
+function tiCorrect(y,w,M){
+  const N=y.length,ch=fitChannels(y,w,M);if(!ch)return y;
+  const cb=meanOf(ch.map(f=>f.c)),Rs=ch.map(f=>Math.hypot(f.a,f.b)),Rb=meanOf(Rs),ph=ch.map(f=>Math.atan2(-f.b,f.a));
+  const pb=Math.atan2(meanOf(ph.map(Math.sin)),meanOf(ph.map(Math.cos)));
+  const o=new Float64Array(N);for(let n=0;n<N;n++){const m=n%M,th=w*n;o[n]=y[n]-(ch[m].c-cb)-(Rs[m]*Math.cos(th+ph[m])-Rb*Math.cos(th+pb));}
+  return o;
+}
+function weightCal(raw,N,w,Mm,bad,xc,H){
+  H=clamp(Math.round(H)||5,1,15);
+  const {mat,B,wNom}=raw;if(mat.length<N*B)return {error:'len'};
+  const binary=wNom.every((v,i)=>v===Math.pow(2,B-1-i));
+  const chans=[];
+  for(let m=0;m<Mm;m++){
+    const varies=[];for(let i=0;i<B;i++){let s=0,c=0;for(let n=m;n<N;n+=Mm){if(bad.has(n))continue;s+=mat[n*B+i];c++;}varies.push(s>0&&s<c);}
+    const ref=varies.indexOf(true);if(ref<0)return {error:'flat'};
+    const free=[];for(let i=0;i<B;i++)if(i!==ref&&varies[i])free.push(i);
+    const K=free.length+1+2*H,A=Array.from({length:K},()=>new Array(K).fill(0)),rhs=new Array(K).fill(0),v=new Float64Array(K);let syy=0,cnt=0;
+    for(let n=m;n<N;n+=Mm){if(bad.has(n))continue;let y=-wNom[ref]*mat[n*B+ref];
+      for(let i=0;i<B;i++)if(!varies[i]&&i!==ref)y-=wNom[i]*mat[n*B+i];
+      free.forEach((i,j)=>{v[j]=mat[n*B+i];});const j0=free.length;v[j0]=-1;for(let h=1;h<=H;h++){v[j0+2*h-1]=-Math.cos(h*w*n);v[j0+2*h]=-Math.sin(h*w*n);}
+      for(let p=0;p<K;p++){if(!v[p])continue;rhs[p]+=v[p]*y;for(let q=0;q<K;q++)A[p][q]+=v[p]*v[q];}syy+=y*y;cnt++;}
+    const sol=solveN(A,rhs);if(!sol)return {error:'singular'};
+    let rss=syy;for(let p=0;p<K;p++)rss-=sol[p]*rhs[p];const s2=Math.max(0,rss)/Math.max(1,cnt-K);
+    const se=new Array(B).fill(0);
+    free.forEach((i,j)=>{const e=new Array(K).fill(0);e[j]=1;const col=solveN(A,e);se[i]=col?Math.sqrt(Math.max(0,s2*col[j])):0;});
+    const wt=wNom.slice();free.forEach((i,j)=>{wt[i]=sol[j];});
+    const sc=wNom.reduce((a,b)=>a+b,0)/wt.reduce((a,b)=>a+b,0);
+    chans.push({wt:wt.map(v=>v*sc),se:se.map(v=>v*sc)});
+  }
+  const err=chans.map(c=>c.wt.map((v,i)=>v-wNom[i]));
+  const trans=binary?chans.map(c=>c.wt.map((v,i)=>{let s=0;for(let j=i+1;j<B;j++)s+=c.wt[j];return v-s-1;})):null;
+  const yW=new Float64Array(N);
+  for(let n=0;n<N;n++){if(bad.has(n)){yW[n]=xc[n];continue;}const wt=chans[n%Mm].wt;let s=0;for(let i=0;i<B;i++)if(mat[n*B+i])s+=wt[i];yW[n]=s;}
+  /* unit-capacitor mismatch estimate (binary arrays), from bits whose nominal weight is >= 8 */
+  let sig=null;
+  if(binary){let s=0,c=0;chans.forEach(ch=>{for(let i=0;i<B;i++){const W=wNom[i];if(W<8)continue;const e=ch.wt[i]-W;s+=Math.max(0,e*e-ch.se[i]*ch.se[i])/W;c++;}});if(c)sig=Math.sqrt(s/c);}
+  let worst={i:0,m:0,v:0};err.forEach((row,m)=>row.forEach((v,i)=>{if(Math.abs(v)>Math.abs(worst.v))worst={i,m,v};}));
+  let worstT=null;if(trans){worstT={i:0,m:0,v:0};trans.forEach((row,m)=>row.forEach((v,i)=>{if(i<B-1&&Math.abs(v)>Math.abs(worstT.v))worstT={i,m,v};}));}
+  const metric=binary?trans:err,main=Object.assign({},binary?worstT:worst);
+  if(chans.length>1){const vs=metric.map(r=>r[main.i]);const mx=Math.max(...vs),mn=Math.min(...vs),mean=meanOf(vs);main.common=(mx-mn)<Math.max(0.3,0.3*Math.abs(mean));if(main.common)main.v=mean;}
+  return {chans,err,trans,binary,yW,B,wNom,sig,worst,worstT,metric,main,from:raw.from};
+}
+function capModel(B,sigU,runs,seed){
+  B=clamp(Math.round(B),3,14);runs=clamp(Math.round(runs),20,2000);const r=rng(seed||5),nC=1<<B,out=[];
+  const w=new Float64Array(B),W=new Float64Array(nC);
+  for(let t=0;t<runs;t++){
+    let tot=1+sigU*gauss(r);for(let k=0;k<B;k++){const u=Math.pow(2,k);w[k]=u+sigU*Math.sqrt(u)*gauss(r);tot+=w[k];}
+    const sc=nC/tot;for(let k=0;k<B;k++)w[k]*=sc;
+    for(let c=0;c<nC;c++){let acc=0,up=Infinity;for(let k=B-1;k>=0;k--){const th=acc+w[k];if((c>>k)&1)acc=th;else if(th<up)up=th;}W[c]=Math.max(0,(up===Infinity?nC:up)-acc);}
+    let sw=0;for(let c=1;c<nC-1;c++)sw+=W[c];const wb=sw/(nC-2);
+    let maxD=0,miss=0,inl=0,maxI=0;const I=new Float64Array(nC);let sx=0,sy=0,sxx=0,sxy=0,sww=0;
+    for(let c=1;c<nC-1;c++){const d=W[c]/wb-1;if(Math.abs(d)>maxD)maxD=Math.abs(d);if(W[c]===0)miss++;inl+=d;I[c]=inl;if(Math.abs(inl)>maxI)maxI=Math.abs(inl);sx+=c;sy+=inl;sxx+=c*c;sxy+=c*inl;sww+=(W[c]/wb)*(W[c]/wb);}
+    const n=nC-2,sl=(n*sxy-sx*sy)/(n*sxx-sx*sx),ic=(sy-sl*sx)/n;let e2=0;for(let c=1;c<nC-1;c++){const d=I[c]-(sl*c+ic);e2+=d*d;}
+    const err=e2/n+sww/n/12,sndr=10*Math.log10(nC*nC/8/err);
+    out.push({maxD,maxI,miss,enob:(sndr-1.76)/6.02});
+  }
+  const pick=(key,p)=>{const a=out.map(o=>o[key]).sort((x,y)=>x-y);return a[Math.min(a.length-1,Math.floor(p*(a.length-1)+0.5))];};
+  const pct={};['maxD','maxI','enob'].forEach(k=>{pct[k]=[pick(k,0.5),pick(k,0.9),pick(k,0.99)];});
+  pct.enobLow=[pick('enob',0.5),pick('enob',0.1),pick('enob',0.01)];
+  const yld=out.filter(o=>o.maxD<0.5&&!o.miss).length/out.length,missRate=out.filter(o=>o.miss).length/out.length;
+  const need=sigU>0&&pct.maxD[2]>0?0.5*sigU/pct.maxD[2]:null;
+  return {B,sigU,runs,pct,yld,missRate,need};
+}
+const SAR_TX={
+  decision:(i,w)=>`bit ${i+1} (${fmt(w)})`,
+  title:'Bit-weight calibration (SAR)',fromCodes:'Derived from the binary digits of the output codes',fromBits:'Computed from raw comparator decisions',copyW:'Copy CSV',
+  worstLine:(lab,m,v)=>`The weight furthest off is <b>${esc(lab)}</b>${m!=null?` (channel ${m})`:''}, by <b>${v} LSB</b>.`,
+  transMain:(lab,m,v,pos,common)=>`The code width where <b>${esc(lab)}</b> toggles is off by <b>${v} LSB</b>${m!=null?` (largest in channel ${m})`:''}${common?' (similar in all channels)':''}, meaning the ${esc(lab)} weight is ${pos?'larger':'smaller'} than all lower bits combined.`,
+  weightSub:(lab,v)=>`As a weight, ${esc(lab)} is off by ${v} LSB (total fixed to the nominal sum).`,
+  gainLine:(g,ti)=>g>=0.1?`Recombining the bits with the calibrated weights in the digital domain, with no circuit change, improves SNDR by <b>${g.toFixed(1)} dB</b>${ti?' (computed after removing interleaving mismatch)':''}.`:'Calibrating the bit weights does not help SNDR much.',
+  sigLine:s=>`From these errors, the unit-capacitor mismatch is about ${s}%.`,
+  bit:'Bit',nominal:'Nominal',calibrated:'Calibrated',error:'Error (LSB)',transCol:'Code-width error at toggle',
+  table1:'Weight of each bit',tableTI:'Weight error per channel and bit (LSB)',
+  chartTitle:'Weight error',chartTitleT:'Code-width error where each bit toggles',tableTIT:'Code-width error at each bit toggle, per channel (LSB)',chart1:'LSB, MSB on the left',chartTI:'LSB (rms over channels), MSB on the left',
+  note:'Method: a least-squares fit of each bit (0/1) together with a sine gives the true weight of each bit (total fixed to the nominal sum). ± is the estimation uncertainty.',
+  cmBad:'Bits must be between 3 and 14, and mismatch must be 0 or positive.',cmRunning:'Running…',
+  cmVerdict:r=>`${r.B} bits, unit-capacitor mismatch ${(r.sigU*100).toFixed(2)}%, ${r.runs} runs: <b>${(r.yld*100).toFixed(1)}%</b> of chips have |DNL| < 0.5 LSB and no missing codes${r.missRate>0?`; ${(r.missRate*100).toFixed(1)}% have missing codes`:''}.${r.need!=null?` For 99% of chips to have |DNL| < 0.5 LSB, unit-capacitor mismatch must be below about <b>${(r.need*100).toFixed(2)}%</b>.`:''}`,
+  cmMed:'Half of chips',cm90:'90% of chips',cm99:'99% of chips',cmDNL:'Max |DNL| (LSB) at most',cmINL:'Max |INL| (LSB) at most',cmENOB:'ENOB at least',
+  cmNote:'Capacitor mismatch only (ideal comparator, no parasitics or noise). Making the unit capacitor 4× larger roughly halves its mismatch.',
+  cmUse:s=>`Use ${s}% estimated from data`
+};
+
+/* ---------- SAR UI (language strings come from SAR_TX) ---------- */
+function sarBitLabel(WC,i){return WC.binary?bitName(WC.B-1-i,WC.B):SAR_TX.decision(i,WC.wNom[i]);}
+function sarBarsSVG(vals,labels,W,fmtV,hot){
+  const n=vals.length,H=124,pl=46,pr=8,pt=10,pb=28,pw=W-pl-pr,ph=H-pt-pb;
+  let mx=0;vals.forEach(v=>{if(Math.abs(v)>mx)mx=Math.abs(v);});mx=Math.max(mx*1.15,0.3);
+  const Y=v=>pt+ph/2-(v/mx)*(ph/2),bw=pw/n;let s='';
+  niceTicks(-mx,mx,4).forEach(t=>{const y=Y(t);if(y<pt-1||y>pt+ph+1)return;s+=`<line class="gridl" x1="${pl}" x2="${W-pr}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text class="tick" x="${pl-6}" y="${(y+4).toFixed(1)}" text-anchor="end">${esc(fmtV(t))}</text>`;});
+  vals.forEach((v,i)=>{const x=pl+i*bw+bw*0.15,y=Math.min(Y(v),Y(0)),h=Math.abs(Y(v)-Y(0));s+=`<rect class="${i===hot?'bar-hot':'bar'}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,bw*0.7).toFixed(1)}" height="${Math.max(0.5,h).toFixed(1)}"><title>${esc(labels[i])}: ${esc(fmtV(v))}</title></rect>`;});
+  s+=`<line class="zero" x1="${pl}" x2="${W-pr}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}"/>`;
+  const every=n<=12?1:2;
+  labels.forEach((l,i)=>{if(i%every)return;s+=`<text class="tick" x="${(pl+(i+0.5)*bw).toFixed(1)}" y="${H-8}" text-anchor="middle">${esc(l)}</text>`;});
+  return `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">${s}</svg>`;
+}
+function sarWeightCard(A){
+  const WC=A.WC;if(!WC||WC.error)return '';
+  const {B,wNom,Mm}={B:WC.B,wNom:WC.wNom,Mm:A.Mm};const T=SAR_TX;
+  const f2=v=>(v>=0?'+':'')+v.toFixed(2);
+  const wo=WC.main,lab=sarBitLabel(WC,wo.i),chM=Mm>1&&!wo.common?wo.m:null;
+  let verdict=WC.binary?T.transMain(lab,chM,f2(wo.v),wo.v>0,Mm>1&&wo.common)+' '+T.weightSub(lab,f2(WC.err[wo.m][wo.i])):T.worstLine(lab,chM,f2(wo.v));
+  verdict+=' '+T.gainLine(WC.gain,Mm>1);
+  if(WC.sig!=null)verdict+=' '+T.sigLine((WC.sig*100).toFixed(2));
+  let table='';
+  if(Mm>1){
+    const head=`<tr><th>${esc(T.bit)}</th>${WC.chans.map((c,m)=>`<th>${m}</th>`).join('')}</tr>`;
+    const body=wNom.map((W,i)=>WC.binary&&i===B-1?'':`<tr><td>${esc(sarBitLabel(WC,i))}</td>${WC.metric.map(row=>{const v=row[i];const a=Math.min(1,Math.abs(v)/Math.max(0.5,Math.abs(wo.v)));return `<td style="background:color-mix(in srgb, var(--fail) ${(a*38).toFixed(0)}%, transparent)">${f2(v)}</td>`;}).join('')}</tr>`).join('');
+    table=`<details><summary>${esc(WC.binary?T.tableTIT:T.tableTI)}</summary><div class="tbl-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></details>`;
+  } else {
+    const c=WC.chans[0];
+    const body=wNom.map((W,i)=>`<tr><td>${esc(sarBitLabel(WC,i))}</td><td>${fmt(W)}</td><td>${c.wt[i].toFixed(2)}</td><td${i===wo.i?' class="hot"':''}>${f2(WC.err[0][i])} <span class="spec-sub" style="display:inline">±${c.se[i].toFixed(2)}</span></td>${WC.trans?`<td>${i<B-1?f2(WC.trans[0][i]):'—'}</td>`:''}</tr>`).join('');
+    table=`<details><summary>${esc(T.table1)}</summary><div class="tbl-wrap"><table><thead><tr><th>${esc(T.bit)}</th><th>${esc(T.nominal)}</th><th>${esc(T.calibrated)}</th><th>${esc(T.error)}</th>${WC.trans?`<th>${esc(T.transCol)}</th>`:''}</tr></thead><tbody>${body}</tbody></table></div></details>`;
+  }
+  return `<div class="card"><div class="card-h"><h3>${esc(T.title)}</h3><div class="row-btns"><span class="hint">${esc(WC.from==='bits'?T.fromBits:T.fromCodes)}</span><button type="button" class="btn btn-sm" id="b-wcsv">${esc(T.copyW)}</button></div></div>
+    <p class="verdict sm">${verdict}</p>
+    <div class="mm"><div class="mm-h"><b>${esc(WC.binary?T.chartTitleT:T.chartTitle)}</b><span>${esc(Mm>1?T.chartTI:T.chart1)}</span></div><div class="chart-host" id="c-w"></div></div>
+    <p class="hint">${esc(T.note)}</p>
+    ${table}</div>`;
+}
+function sarWeightAfter(A,hostW,copyText){
+  const WC=A.WC;if(!WC||WC.error)return;
+  const h=document.getElementById('c-w');if(!h)return;
+  const Mm=A.Mm,nb=WC.binary?WC.B-1:WC.B,M=WC.metric;const vals=[];for(let i=0;i<nb;i++){if(Mm===1){vals.push(M[0][i]);continue;}let s=0;M.forEach(r=>{s+=r[i]*r[i];});vals.push(Math.sqrt(s/Mm)*(Math.sign(meanOf(M.map(r=>r[i])))||1));}
+  const labels=vals.map((_,i)=>sarBitLabel(WC,i));
+  h.innerHTML=sarBarsSVG(vals,labels,hostW(h),t=>(+t).toFixed(1),WC.main.i);
+  const b=document.getElementById('b-wcsv');if(b)b.addEventListener('click',e=>copyText(sarWeightCSV(A),e.currentTarget));
+}
+function sarWeightCSV(A){
+  const WC=A.WC;const rows=['channel,bit,nominal_weight,calibrated_weight,error_lsb,std_err_lsb'];
+  WC.chans.forEach((c,m)=>WC.wNom.forEach((W,i)=>rows.push(`${m},${sarBitLabel(WC,i)},${W},${c.wt[i].toFixed(4)},${(c.wt[i]-W).toFixed(4)},${c.se[i].toFixed(4)}`)));
+  return rows.join('\n')+'\n';
+}
+/* capacitor-mismatch Monte Carlo card (static, left column) */
+function initCapModel(store,getBits){
+  const $=id=>document.getElementById(id);const T=SAR_TX;
+  const st=store.get('capmodel',{bits:'',sig:'0.5',runs:'200'});
+  $('cm-bits').value=st.bits;$('cm-sig').value=st.sig;$('cm-runs').value=st.runs;
+  const save=()=>store.set('capmodel',{bits:$('cm-bits').value,sig:$('cm-sig').value,runs:$('cm-runs').value});
+  ['cm-bits','cm-sig','cm-runs'].forEach(id=>$(id).addEventListener('input',save));
+  const run=()=>{
+    const B=Math.round(parseNum($('cm-bits').value))||getBits()||10,sig=parseNum($('cm-sig').value)/100,runs=Math.round(parseNum($('cm-runs').value))||200;
+    if(!(sig>=0)||B<3||B>14){$('cm-out').innerHTML=`<p class="hint">${esc(T.cmBad)}</p>`;return;}
+    $('cm-out').innerHTML=`<p class="hint">${esc(T.cmRunning)}</p>`;
+    setTimeout(()=>{const r=capModel(B,sig,runs,7);
+      const row=(lab,a,f)=>`<tr><td>${esc(lab)}</td>${a.map(v=>`<td>${f(v)}</td>`).join('')}</tr>`;
+      $('cm-out').innerHTML=`<p class="verdict sm">${T.cmVerdict(r)}</p>
+        <div class="tbl-wrap"><table><thead><tr><th></th><th>${esc(T.cmMed)}</th><th>${esc(T.cm90)}</th><th>${esc(T.cm99)}</th></tr></thead><tbody>
+        ${row(T.cmDNL,r.pct.maxD,v=>v.toFixed(2))}${row(T.cmINL,r.pct.maxI,v=>v.toFixed(2))}${row(T.cmENOB,r.pct.enobLow,v=>v.toFixed(2))}</tbody></table></div>
+        <p class="hint">${esc(T.cmNote)}</p>`;},20);
+  };
+  $('cm-run').addEventListener('click',run);
+  $('cm-use').addEventListener('click',()=>{const v=$('cm-use').dataset.v;if(v){$('cm-sig').value=v;save();run();}});
+}
+function setCapEstimate(A){
+  const b=document.getElementById('cm-use');if(!b)return;
+  const s=A&&A.WC&&!A.WC.error&&A.WC.sig!=null?A.WC.sig*100:null;
+  if(s==null||!(s>0)){b.hidden=true;return;}
+  b.hidden=false;b.dataset.v=s.toFixed(2);b.textContent=SAR_TX.cmUse(s.toFixed(2));
+  const bi=document.getElementById('cm-bits');if(bi&&!bi.value)bi.placeholder=String(A.WC.B);
+}
+
+/* ---------- sine fitting ---------- */
+function solve3(A,b){
+  const M=[[A[0][0],A[0][1],A[0][2],b[0]],[A[1][0],A[1][1],A[1][2],b[1]],[A[2][0],A[2][1],A[2][2],b[2]]];
+  for(let i=0;i<3;i++){let p=i;for(let r=i+1;r<3;r++)if(Math.abs(M[r][i])>Math.abs(M[p][i]))p=r;const t=M[i];M[i]=M[p];M[p]=t;
+    if(Math.abs(M[i][i])<1e-300)return null;
+    for(let r=0;r<3;r++){if(r===i)continue;const f=M[r][i]/M[i][i];for(let c=i;c<4;c++)M[r][c]-=f*M[i][c];}}
+  return [M[0][3]/M[0][0],M[1][3]/M[1][1],M[2][3]/M[2][2]];
+}
+function fit3(x,w,start,step){
+  let scc=0,sss=0,scs=0,sc=0,ss=0,n=0,syc=0,sys=0,sy=0,syy=0;
+  const cd=Math.cos(w*step),sd=Math.sin(w*step);let cc=Math.cos(w*start),sn=Math.sin(w*start);
+  for(let i=start;i<x.length;i+=step){const y=x[i];scc+=cc*cc;sss+=sn*sn;scs+=cc*sn;sc+=cc;ss+=sn;n++;syc+=y*cc;sys+=y*sn;sy+=y;syy+=y*y;const c2=cc*cd-sn*sd;sn=sn*cd+cc*sd;cc=c2;}
+  const sol=solve3([[scc,scs,sc],[scs,sss,ss],[sc,ss,n]],[syc,sys,sy]);if(!sol)return null;
+  const [a,b,c]=sol;return {a,b,c,n,res:Math.max(0,syy-(a*syc+b*sys+c*sy))};
+}
+function refineW(x,kf,N){
+  let lo=2*Math.PI*(kf-1)/N,hi=2*Math.PI*(kf+1)/N;const g=(Math.sqrt(5)-1)/2;
+  const f=w=>{const r=fit3(x,w,0,1);return r?r.res:Infinity;};
+  let x1=hi-g*(hi-lo),x2=lo+g*(hi-lo),f1=f(x1),f2=f(x2);
+  for(let it=0;it<32;it++){if(f1<f2){hi=x2;x2=x1;f2=f1;x1=hi-g*(hi-lo);f1=f(x1);}else{lo=x1;x1=x2;f1=f2;x2=lo+g*(hi-lo);f2=f(x2);}}
+  return (lo+hi)/2;
+}
+const median=a=>{const s=Float64Array.from(a).sort();const n=s.length;return n?(n%2?s[n>>1]:(s[n/2-1]+s[n/2])/2):NaN;};
+const meanOf=a=>a.reduce((s,v)=>s+v,0)/a.length;
+const rmsOf=a=>Math.sqrt(meanOf(a.map(v=>v*v)));
+function fitChannels(x,w,M){const ch=[];for(let m=0;m<M;m++){const f=fit3(x,w,m,M);if(!f)return null;ch.push(f);}return ch;}
+const modelAt=(ch,M,w,n)=>{const f=ch[n%M];return f.a*Math.cos(w*n)+f.b*Math.sin(w*n)+f.c;};
+
+/* ---------- full analysis ---------- */
+function analyze(x0,P,raw){
+  const R0=computeFFT(x0,P);if(R0.error)return {error:R0.error};
+  const N=R0.N,x=Float64Array.from(x0.slice(0,N)),notes=R0.notes.slice();
+  const w=refineW(x,R0.kf,N);
+  const coherent=Math.abs(w*N/(2*Math.PI)-R0.kf)<0.02;
+  let Mm=1,tiErr=null;
+  if(P.M>1){
+    if(N/P.M<16)tiErr=`Only ${Math.floor(N/P.M)} samples per channel, too few to analyze each channel. At least 16 are needed; 64 or more is better.`;
+    else{let wm=(w*P.M)%(2*Math.PI);wm=Math.min(wm,2*Math.PI-wm);if(wm<0.05)tiErr='The input frequency is too close to a multiple of Fs/M, so each channel sees almost DC and the channels cannot be separated. Try another input frequency.';else Mm=P.M;}
+    if(tiErr)notes.push(tiErr);
+  }
+  let ch=fitChannels(x,w,Mm);if(!ch)return {error:'The sine fit failed. The data may not be a single sine wave.'};
+  const resid=new Float64Array(N);
+  const robust=()=>{for(let n=0;n<N;n++)resid[n]=x[n]-modelAt(ch,Mm,w,n);const sig=[];for(let m=0;m<Mm;m++){const r=[];for(let n=m;n<N;n+=Mm)r.push(Math.abs(resid[n]));sig.push(1.4826*median(r));}return sig;};
+  let sig=robust();
+  const thr=sig.map(s=>Math.max(7*s,1e-12));
+  const out=[];for(let n=0;n<N;n++)if(Math.abs(resid[n])>thr[n%Mm])out.push(n);
+  let xc=x,sparkle=null,Rc=R0;
+  if(out.length>N*0.01){notes.push(`${out.length} samples are far from the fitted sine (more than 1%), which does not look like sparkle codes. Possible causes: clipping, an input that is not a single sine, or samples in the wrong order.`);}
+  else if(out.length){
+    xc=Float64Array.from(x);out.forEach(n=>{xc[n]=modelAt(ch,Mm,w,n);});
+    ch=fitChannels(xc,w,Mm)||ch;sig=robust();
+    const perCh=new Array(Mm).fill(0);out.forEach(n=>perCh[n%Mm]++);
+    const errs=out.map(n=>resid[n]);
+    let pat=null;
+    if(P.bits>0){const js=errs.map(e=>{const a=Math.abs(e);for(let j=P.bits-1;j>=3;j--){const p=Math.pow(2,j);if(Math.abs(a-p)<=0.2*p)return j;}return null;});
+      const cnt={};js.forEach(j=>{if(j!=null)cnt[j]=(cnt[j]||0)+1;});const best=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+      if(best!=null&&cnt[best]*2>=js.length){const j=+best;pat={j,w:Math.pow(2,j),k:cnt[best],n:js.length};}}
+    Rc=computeFFT(xc,P);
+    sparkle={idx:out,errs,perCh,pat,thr:median(thr)};
+  }
+  /* interleaving */
+  let CA=null;
+  if(Mm>1){
+    const cbar=meanOf(ch.map(f=>f.c)),Rs=ch.map(f=>Math.hypot(f.a,f.b)),Rbar=meanOf(Rs),phs=ch.map(f=>Math.atan2(-f.b,f.a));
+    const phbar=Math.atan2(meanOf(phs.map(Math.sin)),meanOf(phs.map(Math.cos)));
+    const wrap=a=>{a=(a+Math.PI)%(2*Math.PI);if(a<0)a+=2*Math.PI;return a-Math.PI;};
+    let wt=w,sgn=1,fUsed=R0.fsOk?w/(2*Math.PI)*R0.Fs:null,trueGiven=false;
+    if(R0.fsOk&&fin(P.fin)&&P.fin>0){const k=Math.round(P.fin/R0.Fs),d=P.fin-k*R0.Fs;sgn=d<0?-1:1;wt=2*Math.PI*P.fin/R0.Fs;fUsed=P.fin;trueGiven=true;}
+    const cs=ch.map((f,m)=>{const dph=wrap(phs[m]-phbar);const dtTs=sgn*dph/wt;return {m,c:f.c,R:Rs[m],ph:phs[m],dc:f.c-cbar,dg:Rs[m]/Rbar-1,dtTs,dt:R0.fsOk?dtTs/R0.Fs:null,noise:sig[m]};});
+    const corr=(o,g,t)=>{const y=new Float64Array(N);for(let n=0;n<N;n++){const c=cs[n%Mm],th=w*n;let e=0;if(o)e+=c.c-cbar;if(g)e+=(c.R-Rbar)*Math.cos(th+c.ph);if(t)e+=Rbar*(Math.cos(th+c.ph)-Math.cos(th+phbar));y[n]=xc[n]-e;}return y;};
+    const fixes={o:computeFFT(corr(1,0,0),P),g:computeFFT(corr(0,1,0),P),t:computeFFT(corr(0,0,1),P),all:computeFFT(corr(1,1,1),P)};
+    const worst=key=>cs.reduce((b,c)=>Math.abs(c[key])>Math.abs(b[key])?c:b,cs[0]);
+    const nMed=median(cs.map(c=>c.noise));const noisy=cs.filter(c=>c.noise>1.4*nMed);
+    CA={ch:cs,fixes,fUsed,trueGiven,rmsO:rmsOf(cs.map(c=>c.dc)),rmsG:rmsOf(cs.map(c=>c.dg)),rmsT:rmsOf(cs.map(c=>c.dtTs)),wO:worst('dc'),wG:worst('dg'),wT:worst('dtTs'),nMed,noisy};
+  }
+  /* bit weights */
+  let WC=null;
+  const rawU=raw||rawFromCodes(x,P.bits);
+  if(rawU){const r=weightCal(rawU,N,w,Mm,new Set(sparkle?sparkle.idx:[]),xc,P.H);
+    if(r.error)WC={error:r.error};
+    else{const base=CA?CA.fixes.all:Rc;r.R=computeFFT(Mm>1?tiCorrect(r.yW,w,Mm):r.yW,P);r.gain=r.R.sndr-base.sndr;WC=r;}}
+  const Rf=WC&&!WC.error&&WC.gain>0.05?WC.R:(CA?CA.fixes.all:Rc);
+  /* noise */
+  const NI=(()=>{
+    const {Pw,mask,half,span,kf}=Rf;const ex=new Uint8Array(half+1);for(let k=0;k<=half;k++)ex[k]=mask[k]?1:0;
+    Rf.spurs.forEach(s=>{for(let k=Math.max(0,s.k-span-1);k<=Math.min(half,s.k+span+1);k++)ex[k]=1;});
+    const all=[];for(let k=0;k<=half;k++)if(!ex[k])all.push(Pw[k]);const mAll=median(all);
+    const W1=Math.max(6,Math.round(half/200));const near=[],low=[];
+    for(let k=0;k<=half;k++){if(ex[k])continue;const d=Math.abs(k-kf);if(d>span&&d<=span+W1)near.push(Pw[k]);if(k>span&&k<=span+W1&&d>span+W1)low.push(Pw[k]);}
+    const nearDb=coherent&&near.length>=4?10*Math.log10(median(near)/mAll):null;
+    const lowDb=low.length>=4?10*Math.log10(median(low)/mAll):null;
+    let Psig=0,nb=0;for(let k=0;k<=half;k++){if(mask[k]===2)Psig+=Pw[k];else if(mask[k]!==1)nb++;}
+    const snrF=10*Math.log10(Psig/(mAll/Math.LN2*nb));
+    const rms=Rf.Asig/Math.SQRT2/Math.pow(10,snrF/20);
+    const isCode=P.bits>0;const ratio=isCode?rms/Math.sqrt(1/12):null;const extra=isCode?Math.sqrt(Math.max(0,rms*rms-1/12)):null;
+    const ideal=isCode?6.02*P.bits+1.76+Rf.sigDb:null;
+    const Ptot=Math.pow(10,-Rf.sndr/10),Ph=fin(Rf.thd)?Math.pow(10,Rf.thd/10):0,Pn=Math.pow(10,-snrF/10),Psp=Math.max(0,Ptot-Ph-Pn);
+    const spurGain=Psp>0?10*Math.log10(Ptot/Math.max(Ptot-Psp,1e-30)):0;
+    return {nearDb,lowDb,rms,ratio,extra,ideal,snr:snrF,W1,coherent,spurGain};
+  })();
+  /* DNL / INL */
+  const DL=(()=>{
+    if(!(P.bits>0))return {skip:'Bits is blank, so DNL / INL cannot be computed.'};
+    for(let n=0;n<N;n++)if(Math.abs(x[n]-Math.round(x[n]))>1e-6)return {skip:'The data are not integer output codes (they look like voltages), so DNL / INL cannot be computed.'};
+    const bad=new Set(sparkle?sparkle.idx:[]);const codes=[];for(let n=0;n<N;n++)if(!bad.has(n))codes.push(Math.round(x[n]));
+    const g=fit3(xc,w,0,1);const A=Math.hypot(g.a,g.b),C=g.c,Nc=codes.length,hc=Nc/(Math.PI*A);
+    if(hc<8){const need=Math.pow(2,Math.ceil(Math.log2(30*Math.PI*A)));return {skip:`Not enough samples: codes near mid-scale appear only ${hc.toFixed(1)} times on average. At least 8 are needed, 30 or more is better. Use ${need} samples or more.`};}
+    let mn=Infinity,mx=-Infinity;for(const c of codes){if(c<mn)mn=c;if(c>mx)mx=c;}
+    const H=new Float64Array(mx-mn+2);codes.forEach(c=>H[c-mn]++);
+    const spread=CA?Math.max(...CA.ch.map(c=>Math.abs(c.dc)+Math.abs(c.dg)*A)):0;const ed=Math.ceil(3+2*spread);
+    const kLo=Math.max(mn+2,Math.ceil(C-A)+ed),kHi=Math.min(mx-2,Math.floor(C+A)-ed);
+    if(kHi-kLo<16)return {skip:'The signal amplitude is too small and covers too few codes for DNL / INL.'};
+    let cum=0;for(let c=mn;c<kLo;c++)cum+=H[c-mn];
+    const T=[];for(let k=kLo;k<=kHi+1;k++){T.push(C-A*Math.cos(Math.PI*cum/Nc));cum+=H[k-mn];}
+    const Wd=[];for(let i=0;i<T.length-1;i++)Wd.push(T[i+1]-T[i]);const Wb=meanOf(Wd);
+    const dnl=Wd.map(v=>v/Wb-1);const inl=[];let s=0;dnl.forEach(v=>{s+=v;inl.push(s);});
+    const missing=[];for(let k=kLo;k<=kHi;k++)if(!H[k-mn])missing.push(k);
+    const sigma=Math.max(0.02,1.4826*median(dnl.map(Math.abs))),th=Math.max(0.2,5*sigma);
+    let maxD=-Infinity,minD=Infinity,maxI=0,kMaxD=kLo;dnl.forEach((v,i)=>{if(v>maxD){maxD=v;kMaxD=kLo+i;}if(v<minD)minD=v;});inl.forEach(v=>{if(Math.abs(v)>Math.abs(maxI))maxI=v;});
+    const spikes=[];dnl.forEach((v,i)=>{if(Math.abs(v)>th)spikes.push(kLo+i);});
+    const at=k=>(k>=kLo&&k<=kHi)?dnl[k-kLo]:null;const majors=[];
+    for(let j=P.bits-1;j>=4;j--){const p=Math.pow(2,j);const loc=[],ts=[];
+      for(let t=p;t<Math.pow(2,P.bits);t+=2*p){const a=at(t-2),b=at(t-1),c=at(t);if(a==null||b==null||c==null)continue;loc.push(a+b+c);ts.push(t);}
+      if(!loc.length)continue;const mloc=meanOf(loc),sm=sigma*Math.sqrt(3)/Math.sqrt(loc.length);
+      if(Math.abs(mloc)>0.25&&Math.abs(mloc)>3*sm)majors.push({j,ts,mloc});}
+    const major=majors[0]||null,majorCodes=major?major.ts:[];
+    return {kLo,kHi,dnl,inl,missing,sigma,hc,maxD,minD,maxI,kMaxD,spikes,major,majors,majorCodes};
+  })();
+  return {R0,Rc,Rf,N,w,Mm,P,notes,sparkle,CA,NI,DL,resid,coherent,WC};
+}
+
+/* ---------- plain-language summary ---------- */
+const SEV_ORDER={high:0,mid:1,ok:2,info:3};
+function bitName(j,bits){const d=bits-1-j;return d===0?'MSB':`MSB-${d}`;}
+function summarize(A){
+  const {R0,Rc,Rf,CA,NI,DL,sparkle,P,N,WC}=A;const items=[];
+  if(sparkle){const g=Rc.sndr-R0.sndr;const n=sparkle.idx.length;
+    const one=sparkle.perCh.length>1?sparkle.perCh.findIndex(c=>c===n):-1;
+    let t=`${n} samples are suddenly far off (about 1 in every ${Math.round(N/n)} samples).`;
+    if(one>=0)t+=` All are in channel ${one}.`;
+    if(sparkle.pat)t+=` The errors are close to ${sparkle.pat.w} LSB, which is the weight of ${bitName(sparkle.pat.j,P.bits)}, so that bit was likely decided wrong.`;
+    t+=' A common cause is comparator metastability: the comparator does not resolve in time.';
+    items.push({k:'sparkle',sev:g>=2?'high':'mid',title:'Sparkle codes (occasional large errors)',text:t,gain:g});}
+  if(CA){
+    const fx=CA.fixes,base=Rc.sndr;
+    const L=[{k:'o',title:'Channel offset mismatch',g:fx.o.sndr-base,text:`Channels differ by about ${CA.rmsO.toFixed(2)}${P.bits>0?' LSB':''} rms; channel ${CA.wO.m} is furthest off.`},
+      {k:'g',title:'Channel gain mismatch',g:fx.g.sndr-base,text:`Channels differ by about ${(CA.rmsG*100).toFixed(2)}% rms; channel ${CA.wG.m} is furthest off.`},
+      {k:'t',title:'Channel timing skew',g:fx.t.sndr-base,text:`Channels differ by about ${Rf.fsOk?(CA.rmsT/Rf.Fs*1e12).toFixed(2)+' ps':CA.rmsT.toFixed(4)+' Ts'} rms; channel ${CA.wT.m} is furthest off.`}];
+    L.forEach(o=>items.push({k:o.k,sev:o.g>=2?'high':o.g>=1?'mid':'ok',title:o.title,text:o.text+(o.g<1?' Small impact.':''),gain:o.g}));
+    if(CA.noisy.length)items.push({k:'chnoise',sev:'mid',title:`Channel ${CA.noisy.map(c=>c.m).join(', ')} is noisier than the others`,text:`About ${(Math.max(...CA.noisy.map(c=>c.noise))/CA.nMed).toFixed(1)}× the noise of the other channels. Check that channel's comparator, sampling switch and reference.`,gain:null});
+  }
+  { const g=Rf.snr-Rf.sndr;const hs=Rf.spurs.filter(s=>s.cls.type==='harm').sort((a,b)=>b.dbc-a.dbc);
+    items.push({k:'harm',sev:g>=2?'high':g>=1?'mid':'ok',title:'Harmonic distortion (nonlinearity)',text:fin(Rf.thd)?`THD ${Rf.thd.toFixed(1)} dBc${hs.length?`; the largest is harmonic ${hs[0].cls.h} (${hs[0].dbc.toFixed(1)} dBc)`:''}.${g<1?' Small impact.':''}`:'No significant harmonics.',gain:g}); }
+  const skirtOnly=NI.nearDb!=null&&NI.nearDb>6&&Rf.spurs.filter(s=>s.cls.type!=='harm'&&Math.abs(s.k-Rf.kf)>Rf.span+NI.W1).length===0;
+  if(NI.spurGain>=1&&!skirtOnly){
+    const others=Rf.spurs.filter(s=>s.cls.type!=='harm');let guess=null;
+    if(P.M<=1&&others.length>=2){const al=k=>{k=((k%Rf.N)+Rf.N)%Rf.N;return k>Rf.half?Rf.N-k:k;};let bestM=0,bestC=1;
+      for(let m=2;m<=64;m++){const tol=Rf.span+1;let c=0;others.forEach(s=>{for(let i=1;i<m;i++){const b=Math.round(i*Rf.N/m);if([al(b),al(b+Rf.kf),al(b-Rf.kf)].some(q=>Math.abs(q-s.k)<=tol)){c++;break;}}});if(c>bestC){bestC=c;bestM=m;}}
+      if(bestM&&bestC>=Math.min(3,others.length))guess=bestM;}
+    items.push({k:'spurs',sev:NI.spurGain>=2?'high':'mid',title:'Non-harmonic spurs',text:guess?`The spur locations look like mismatch in a ${guess}-channel interleaved ADC. If this ADC is interleaved, set M to ${guess}.`:(P.M>1?'These spurs remain after removing the mismatch. Likely clock, supply or substrate coupling.':'Likely clock, supply or substrate coupling. See the spur table below.'),gain:NI.spurGain});
+  }
+  if(NI.ratio!=null){const r=NI.ratio;items.push({k:'noise',sev:r>=2?'high':r>=1.3?'mid':'ok',title:r<1.3?'Noise close to ideal':'Noise above ideal',text:`Noise is ${NI.rms.toFixed(2)} LSB rms, ${r.toFixed(1)}× ideal quantization noise (0.29 LSB).${r>=1.3?` The extra noise is about ${NI.extra.toFixed(2)} LSB rms, from thermal noise, comparator noise or clock jitter.`:''}`,gain:null});}
+  else items.push({k:'noise',sev:'info',title:'Noise',text:`Counting noise only (no spurs or harmonics), SNR is ${NI.snr.toFixed(1)} dB. Enter Bits and use output codes to compare with ideal quantization noise.`,gain:null});
+  if(NI.nearDb!=null&&NI.nearDb>6)items.push({k:'skirt',sev:'mid',title:'Noise floor raised next to the signal',text:`${NI.nearDb.toFixed(1)} dB above the overall floor. Usually phase noise (low-frequency jitter) on the sampling clock.`,gain:skirtOnly&&NI.spurGain>=0.1?NI.spurGain:null});
+  if(NI.lowDb!=null&&NI.lowDb>6)items.push({k:'lowf',sev:'mid',title:'Noise floor raised at low frequency',text:`${NI.lowDb.toFixed(1)} dB above the overall floor. Usually 1/f noise, or a slowly drifting bias or reference.`,gain:null});
+  if((NI.nearDb==null||NI.nearDb<=6)&&(NI.lowDb==null||NI.lowDb<=6))items.push({k:'flat',sev:'ok',title:'Flat noise floor',text:NI.coherent?'No sign of clock phase noise or 1/f noise.':'No rise at low frequency. Sampling is not coherent, so the region next to the signal was not checked.',gain:null});
+  if(WC&&!WC.error){const wo=WC.main,se=WC.chans[wo.m].se[wo.i]*(WC.binary?1.5:1),sig=Math.abs(wo.v)>Math.max(0.3,3*se),g=WC.gain;
+    const lab=WC.binary?bitName(WC.B-1-wo.i,WC.B):`bit ${wo.i+1}`;
+    let t=WC.binary?`The code width where ${lab} toggles is off by ${wo.v>=0?'+':''}${wo.v.toFixed(2)} LSB${A.Mm>1?(wo.common?' (similar in all channels)':` (largest in channel ${wo.m})`):''}: the ${lab} weight is ${wo.v>0?'larger':'smaller'} than all lower bits combined.`:`The weight furthest off is ${lab}${A.Mm>1?` (channel ${wo.m})`:''}, by ${wo.v>=0?'+':''}${wo.v.toFixed(2)} LSB.`;
+    if(g>=0.1)t+=` Recombining the bits with calibrated weights in the digital domain, with no circuit change, improves SNDR by ${g.toFixed(1)} dB${A.Mm>1?' (after removing interleaving mismatch)':''}.`;
+    if(WC.sig!=null&&sig)t+=` Estimated unit-capacitor mismatch: about ${(WC.sig*100).toFixed(2)}%.`;
+    items.push({k:'wc',sev:g>=2?'high':(g>=1||(sig&&Math.abs(wo.v)>0.5))?'mid':'ok',title:sig?'Bit weights off (capacitor mismatch)':'Bit weights accurate',text:t,gain:g});}
+  if(DL.skip)items.push({k:'dnl',sev:'info',title:'DNL / INL',text:DL.skip,gain:null});
+  else{const mD=Math.max(Math.abs(DL.maxD),Math.abs(DL.minD));const sig=mD>Math.max(0.2,5*DL.sigma);const sev=DL.missing.length||(sig&&mD>0.5)||Math.abs(DL.maxI)>1?'high':(sig&&mD>0.3)||Math.abs(DL.maxI)>0.5||DL.major?'mid':'ok';
+    let t=`DNL ${DL.minD.toFixed(2)} to +${DL.maxD.toFixed(2)} LSB, peak INL ${Math.abs(DL.maxI).toFixed(2)} LSB, ${DL.missing.length?`${DL.missing.length} missing code${DL.missing.length>1?'s':''}`:'no missing codes'}.`;
+    if(DL.major){const ms=DL.majors.slice(0,2);t+=' '+ms.map((m,k)=>`${k?'codes':'Codes'} near ${m.ts.slice(0,3).join(', ')} are ${m.mloc>0?'too wide':'too narrow'}`).join('; ')+`. These are exactly where the ${ms.map(m=>bitName(m.j,P.bits)).join(' and ')} toggle${ms.length>1?'':'s'}, so ${ms.length>1?'those bit weights are':'that bit weight is'} off (in a SAR, usually capacitor mismatch).`;}
+    items.push({k:'dnl',sev,title:sev==='ok'?'DNL / INL normal':'Uneven code widths (DNL / INL)',text:t,gain:null});}
+  items.sort((a,b)=>(SEV_ORDER[a.sev]-SEV_ORDER[b.sev])||((b.gain??-1)-(a.gain??-1)));
+  return items;
+}
+function sampleTI(){
+  const N=32768,M=8,k=5051,A=0.9*512,mid=511.5,Fs=6.4e9,fin0=k*Fs/N,r=rng(11);
+  const off=[2.0,-1.5,0.9,2.4,-1.8,-1.2,1.4,-2.2],g=[0.004,-0.002,0.001,-0.003,0.0025,-0.0015,0.002,-0.003],sk=[0,0.9,-0.6,1.3,-1.0,0.4,-1.1,0.1],nz=[0.25,0.25,0.25,0.25,0.25,0.25,0.6,0.25];
+  const wts=[];for(let i=0;i<10;i++)wts.push(Math.pow(2,i));wts[9]+=1.6;wts[8]+=0.6;
+  const sar=u=>{let acc=0,code=0;for(let i=9;i>=0;i--){if(u>=acc+wts[i]){acc+=wts[i];code+=1<<i;}}return code;};
+  const spk={4101:-256,13317:256,25605:-256};
+  const out=[];
+  for(let n=0;n<N;n++){const ch=n%M;const ph=2*Math.PI*k*n/N+2*Math.PI*fin0*sk[ch]*1e-12;const x=Math.sin(ph)+0.0003*Math.sin(2*ph+0.4)+0.0006*Math.sin(3*ph+1.1);
+    const v=mid+A*(1+g[ch])*x+off[ch]+nz[ch]*gauss(r);let c=sar(clamp(v+0.5,0,1023.999));if(spk[n])c+=spk[n];out.push(clamp(c,0,1023));}
+  return out.join('\n');
+}
+const DEFAULT_P={fs:'6.4G',bits:'10',m:'8',h:'5',fin:'',win:'bh4',wts:''};
+
+/* ---------- UI ---------- */
+(function(){
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const store={get(k,d){try{const v=localStorage.getItem('adcdiag:'+k);return v==null?d:JSON.parse(v);}catch(e){return d;}},set(k,v){try{localStorage.setItem('adcdiag:'+k,JSON.stringify(v));}catch(e){}}};
+const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
+const hostW=h=>h.clientWidth||620;
+let state=null,toastT;
+function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>{t.hidden=true;},2200);}
+function flashBtn(b,msg){const old=b.dataset.orig||b.textContent;b.dataset.orig=old;b.textContent=msg;setTimeout(()=>{b.textContent=old;delete b.dataset.orig;},1600);}
+function copyText(text,btn){
+  let p;try{p=navigator.clipboard.writeText(text);}catch(e){p=Promise.reject(e);}
+  p.then(()=>flashBtn(btn,'Copied')).catch(()=>{const ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';ta.style.left='0';ta.style.top='0';document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy');}catch(_){}ta.remove();flashBtn(btn,ok?'Copied':'Select and copy manually');});
+}
+function saveFile(name,text,btn,type){
+  try{const url=URL.createObjectURL(new Blob([text],{type:type||'text/plain'}));const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);flashBtn(btn,'Saved');}
+  catch(e){flashBtn(btn,'Could not save');}
+}
+
+const P_IDS=['fs','bits','m','h','fin','win','wts'];
+function params(){return {Fs:parseNum($('#p-fs').value),bits:Math.round(parseNum($('#p-bits').value)),win:$('#p-win').value,H:clamp(Math.round(parseNum($('#p-h').value))||5,2,15),M:clamp(Math.round(parseNum($('#p-m').value))||1,1,256),fin:parseNum($('#p-fin').value)};}
+const pctS=v=>(v>=0?'+':'')+(v*100).toFixed(Math.abs(v*100)<0.1?3:2)+'%';
+const sgn=v=>v>=0?'+':'';
+
+/* ---------- charts ---------- */
+function barsSVG(vals,W,fmtV,hot,pos){
+  const M=vals.length,H=118,pl=46,pr=8,pt=10,pb=22,pw=W-pl-pr,ph=H-pt-pb;
+  let mx=0;vals.forEach(v=>{if(Math.abs(v)>mx)mx=Math.abs(v);});mx=mx*1.15||1;
+  const Y=pos?v=>pt+ph-(v/mx)*ph:v=>pt+ph/2-(v/mx)*(ph/2),bw=pw/M;let s='';
+  niceTicks(pos?0:-mx,mx,pos?3:4).forEach(t=>{const y=Y(t);if(y<pt-1||y>pt+ph+1)return;s+=`<line class="gridl" x1="${pl}" x2="${W-pr}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text class="tick" x="${pl-6}" y="${(y+4).toFixed(1)}" text-anchor="end">${esc(fmtV(t))}</text>`;});
+  const hs=Array.isArray(hot)?hot:[hot];
+  vals.forEach((v,i)=>{const x=pl+i*bw+bw*0.15,y=Math.min(Y(v),Y(0)),h=Math.abs(Y(v)-Y(0));s+=`<rect class="${hs.includes(i)?'bar-hot':'bar'}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,bw*0.7).toFixed(1)}" height="${Math.max(0.5,h).toFixed(1)}"><title>Channel ${i}: ${esc(fmtV(v))}</title></rect>`;});
+  s+=`<line class="zero" x1="${pl}" x2="${W-pr}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}"/>`;
+  const every=M<=16?1:M<=32?4:8;
+  for(let i=0;i<M;i+=every)s+=`<text class="tick" x="${(pl+(i+0.5)*bw).toFixed(1)}" y="${H-6}" text-anchor="middle">${i}</text>`;
+  return `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">${s}</svg>`;
+}
+function envSVG(vals,x0,W,o){
+  const H=o.H||130,pl=46,pr=8,pt=10,pb=22,pw=W-pl-pr,ph=H-pt-pb,n=vals.length;
+  let mx=0;for(const v of vals)if(fin(v)&&Math.abs(v)>mx)mx=Math.abs(v);mx=mx*1.12||1;
+  (o.guides||[]).forEach(g=>{if(Math.abs(g)*1.15>mx)mx=Math.abs(g)*1.15;});
+  if(o.cap&&mx>o.cap)mx=o.cap;
+  const Y=v=>pt+ph/2-(clamp(v,-mx,mx)/mx)*(ph/2);
+  const cols=Math.max(1,Math.floor(pw));const lo=new Float64Array(cols).fill(Infinity),hi=new Float64Array(cols).fill(-Infinity);
+  for(let i=0;i<n;i++){const c=Math.min(cols-1,Math.floor(i/n*cols));const v=vals[i];if(v<lo[c])lo[c]=v;if(v>hi[c])hi[c]=v;}
+  let s='';
+  niceTicks(-mx,mx,4).forEach(t=>{const y=Y(t);s+=`<line class="gridl" x1="${pl}" x2="${W-pr}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text class="tick" x="${pl-6}" y="${(y+4).toFixed(1)}" text-anchor="end">${esc(o.fmt?o.fmt(t):fmt(t))}</text>`;});
+  (o.guides||[]).forEach(g=>{const y=Y(g).toFixed(1);s+=`<line class="guide" x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}"/>`;});
+  let d='',mid='';for(let c=0;c<cols;c++){if(lo[c]===Infinity)continue;const x=(pl+c+0.5).toFixed(1);const a=o.bars?Math.max(hi[c],0):hi[c],b=o.bars?Math.min(lo[c],0):lo[c];d+=`M${x},${Y(a).toFixed(1)}V${(Y(b)+0.6).toFixed(1)}`;if(o.line)mid+=(mid?'L':'M')+x+','+Y((hi[c]+lo[c])/2).toFixed(1);}
+  s+=`<path class="env" d="${d}"/>`;if(mid)s+=`<path class="env-line" d="${mid}"/>`;
+  s+=`<line class="zero" x1="${pl}" x2="${W-pr}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}"/>`;
+  (o.marks||[]).forEach(m=>{const x=pl+(m.i+0.5)/n*pw;s+=`<circle class="mk-sp" cx="${x.toFixed(1)}" cy="${Y(m.v).toFixed(1)}" r="4"><title>${esc(m.t||'')}</title></circle>`;});
+  niceTicks(x0,x0+n-1,W<440?4:6).forEach(t=>{const x=pl+(t-x0+0.5)/n*pw;if(x<pl||x>W-pr)return;s+=`<text class="tick" x="${clamp(x,pl+10,W-pr-14).toFixed(1)}" y="${H-6}" text-anchor="middle">${esc(fmt(t))}</text>`;});
+  if(o.label)s+=`<text class="lbl-m" x="${W-pr}" y="${pt+8}" text-anchor="end">${esc(o.label)}</text>`;
+  return `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">${s}</svg>`;
+}
+
+/* ---------- render ---------- */
+const SEVTXT={high:'Major',mid:'Minor',ok:'OK',info:'Note'};
+function compute(){
+  const inp=parseInput($('#d-text').value,$('#p-wts').value),x=inp.x,raw=inp.raw;const P=params();
+  if(raw&&!(P.bits>0))P.bits=Math.round(Math.log2(raw.wNom.reduce((a,b)=>a+b,0)+1));
+  store.set('params',Object.fromEntries(P_IDS.map(k=>[k,$('#p-'+k).value])));
+  if(!x.length){state={empty:true};return;}
+  const A=analyze(x,P,raw);state=A.error?{error:A.error}:A;
+}
+function render(){
+  const out=$('#res');
+  setCapEstimate(state&&!state.empty&&!state.error?state:null);
+  if(!state||state.empty){out.innerHTML='<div class="card empty"><h4>No data yet</h4><p>Paste ADC output into the box on the left, one value per line, or click "Load example" to see how it works.</p></div>';return;}
+  if(state.error){out.innerHTML=`<div class="card empty"><h4>Cannot analyze this data</h4><p>${esc(state.error)}</p></div>`;return;}
+  const A=state,{R0,Rc,Rf,CA,NI,DL,sparkle,P}=A;const R=R0;
+  const ff=k=>R.fsOk?fmt(k*R.Fs/R.N)+'Hz':(k/R.N).toFixed(4)+'·Fs';
+  const items=summarize(A);A.items=items;
+  const probs=items.filter(i=>i.sev==='high'||i.sev==='mid');
+  let v=`SNDR <b>${R.sndr.toFixed(1)} dB</b>, ENOB <b>${R.enob.toFixed(2)} bits</b>${R.bits>0?` (out of ${R.bits})`:''}.`;
+  const lc=t=>/^[A-Z][a-z]/.test(t)?t[0].toLowerCase()+t.slice(1):t;
+  if(probs.length){v+=` The biggest problem is <b class="bad">${esc(lc(probs[0].title))}</b>`;if(probs[1])v+=`, followed by ${esc(lc(probs[1].title))}`;v+='.';}
+  else v+=' No significant problems found.';
+  if(Rf!==R0&&Rf.sndr-R.sndr>=1)v+=` Fixing everything that can be calibrated out gives about ${Rf.sndr.toFixed(1)} dB SNDR (ENOB ${Rf.enob.toFixed(2)} bits).`;
+  const list=items.map(i=>`<li><span class="sev ${i.sev}">${SEVTXT[i.sev]}</span><div><b>${esc(i.title)}</b><p>${esc(i.text)}</p></div><span class="gain">${i.gain!=null&&i.gain>=0.1?'+'+i.gain.toFixed(1)+' dB':''}</span></li>`).join('');
+  const tile=(k,val,u)=>`<div class="stat"><div class="k">${k}</div><div class="v">${val}<span class="u">${u}</span></div></div>`;
+  const tiles=tile('SNDR',R.sndr.toFixed(1),'dB')+tile('SFDR',fin(R.sfdr)?R.sfdr.toFixed(1):'—','dBc')+tile('ENOB',R.enob.toFixed(2),'bit')+tile('THD',fin(R.thd)?R.thd.toFixed(1):'—','dBc')+tile('SNR',R.snr.toFixed(1),'dB')+(R.dbcMode?'':tile('Signal',R.sigDb.toFixed(1),'dBFS'));
+  const notes=A.notes;
+  /* fixes */
+  let fixHTML='';
+  const rows=[{l:'As measured',v:R.sndr,base:true}];
+  if(sparkle)rows.push({l:'Remove sparkles',v:Rc.sndr,k:'sparkle'});
+  if(A.WC&&!A.WC.error&&A.Mm===1)rows.push({l:'Calibrate bit weights',v:A.WC.R.sndr,k:'wc'});
+  if(CA)rows.push({l:'Fix offset',v:CA.fixes.o.sndr,k:'o'},{l:'Fix gain',v:CA.fixes.g.sndr,k:'g'},{l:'Fix timing skew',v:CA.fixes.t.sndr,k:'t'});
+  if(rows.length>1){
+    if(rows.length>2)rows.push({l:'Fix everything',v:Rf.sndr,cls:'all'});
+    const bestK=probs.length&&probs[0].gain!=null?probs[0].k:null;
+    const lo=Math.min(...rows.map(r=>r.v))-4,hi=Math.max(...rows.map(r=>r.v))+1;
+    fixHTML=`<div class="card"><div class="card-h"><h3>What each fix is worth</h3><span class="hint">Each problem is removed from the data, then SNDR is recomputed</span></div>
+      <div class="fixes">${rows.map(r=>{const cls=r.cls||(r.k&&r.k===bestK?'best':'');const d=r.v-R.sndr;return `<div class="fx ${cls}"><span class="fx-l">${r.l}</span><span class="fx-bar"><i style="width:${clamp((r.v-lo)/(hi-lo)*100,2,100).toFixed(1)}%"></i></span><span class="fx-v">${r.v.toFixed(1)} dB${r.base?'':` <small>${sgn(d)}${d.toFixed(1)}</small>`}</span></div>`;}).join('')}</div>
+      <p class="hint">These are estimates that assume each problem can be calibrated out completely.${sparkle&&CA?' The offset, gain and timing-skew rows are computed after removing the sparkles.':''}${CA&&A.WC&&!A.WC.error&&A.WC.gain>0.05?' "Fix everything" also includes bit-weight calibration.':''}</p></div>`;
+  }
+  /* interleaving */
+  let chHTML='';
+  const unitO=R.bits>0?'LSB':'';
+  const fO=t=>R.bits>0?(Math.abs(t)<10?(+t).toFixed(2):(+t).toFixed(1)):fmt(t);
+  const fT=t=>R.fsOk?(t/R.Fs*1e12).toFixed(Math.abs(t/R.Fs*1e12)<10?2:1)+' ps':(+t).toFixed(4)+' Ts';
+  if(CA){
+    chHTML=`<div class="card">
+      <div class="card-h"><h3>Mismatch per channel</h3><div class="row-btns"><button type="button" class="btn btn-sm" id="b-csv">Copy CSV</button><button type="button" class="btn btn-sm" id="b-dl">Download CSV</button></div></div>
+      <p class="verdict sm">Offset: channel <b>${CA.wO.m}</b> is furthest off (${sgn(CA.wO.dc)}${fO(CA.wO.dc)} ${unitO}). Gain: channel <b>${CA.wG.m}</b> (${pctS(CA.wG.dg)}). Timing skew: channel <b>${CA.wT.m}</b> (${sgn(CA.wT.dtTs)}${fT(CA.wT.dtTs)}).${CA.noisy.length?` Noise: channel <b>${CA.noisy.map(c=>c.m).join(', ')}</b> is noisier than the rest.`:''}</p>
+      <div class="mm-grid">
+        <div class="mm"><div class="mm-h"><b>Offset</b><span>${unitO||'raw units'}</span></div><div class="chart-host" data-k="dc"></div></div>
+        <div class="mm"><div class="mm-h"><b>Gain error</b><span>%</span></div><div class="chart-host" data-k="dg"></div></div>
+        <div class="mm"><div class="mm-h"><b>Timing skew</b><span>${R.fsOk?'ps':'×Ts'}</span></div><div class="chart-host" data-k="dtTs"></div></div>
+        <div class="mm"><div class="mm-h"><b>Noise rms</b><span>${unitO||'raw units'}</span></div><div class="chart-host" data-k="noise"></div></div>
+      </div>
+      <p class="hint">The horizontal axis is the channel number (channel 0 = the first sample). Red marks the channel furthest off.${CA.trueGiven?'':` Timing skew assumes an input frequency of ${R.fsOk?esc(fmt(CA.fUsed))+'Hz':'the aliased tone'}. If you are undersampling (input above Fs/2), enter the actual input frequency on the left.`}</p>
+      <details><summary>Values per channel</summary>
+        <div class="tbl-wrap"><table><thead><tr><th>Channel</th><th>Offset${unitO?' ('+unitO+')':''}</th><th>Gain error</th><th>Timing skew</th><th>Noise rms</th></tr></thead><tbody>${CA.ch.map(c=>`<tr><td>${c.m}</td><td${c===CA.wO?' class="hot"':''}>${sgn(c.dc)}${fO(c.dc)}</td><td${c===CA.wG?' class="hot"':''}>${pctS(c.dg)}</td><td${c===CA.wT?' class="hot"':''}>${sgn(c.dtTs)}${fT(c.dtTs)}</td><td${CA.noisy.includes(c)?' class="hot"':''}>${fO(c.noise)}</td></tr>`).join('')}</tbody></table></div>
+      </details></div>`;
+  }
+  /* sparkle */
+  let spHTML='';
+  if(sparkle){
+    const rowsS=sparkle.idx.slice(0,20).map((n,i)=>`<tr><td>${n}</td>${CA?`<td>${n%A.Mm}</td>`:''}<td>${sgn(sparkle.errs[i])}${fO(sparkle.errs[i])}</td></tr>`).join('');
+    spHTML=`<div class="card"><div class="card-h"><h3>Sparkle codes</h3><span class="hint">Errors more than 7× the typical error</span></div>
+      <div class="chart-host" id="c-res"></div>
+      <p class="hint">This is what remains after subtracting the fitted sine from each sample${CA?' (fitted per channel)':''}. Red dots are the sparkle codes; typical errors stay within ±${fO(sparkle.thr)} ${unitO}.</p>
+      <details><summary>Locations (first 20)</summary><div class="tbl-wrap"><table><thead><tr><th>Sample #</th>${CA?'<th>Channel</th>':''}<th>Error${unitO?' ('+unitO+')':''}</th></tr></thead><tbody>${rowsS}</tbody></table></div></details></div>`;
+  }
+  /* noise */
+  const noiseLines=[];
+  if(NI.ratio!=null)noiseLines.push(`Noise is ${NI.rms.toFixed(2)} LSB rms. Ideal quantization noise is 0.29 LSB rms (with quantization noise only, SNR would be ${NI.ideal.toFixed(1)} dB; it is ${NI.snr.toFixed(1)} dB).`);
+  else noiseLines.push(`SNR ${NI.snr.toFixed(1)} dB, noise ${fmt(NI.rms)} rms (raw units).`);
+  noiseLines.push(NI.nearDb==null?'Next to the signal: sampling is not coherent, so this cannot be judged.':`Next to the signal (±${NI.W1} bins) the floor is ${Math.abs(NI.nearDb).toFixed(1)} dB ${NI.nearDb>=0?'above':'below'} the overall floor${NI.nearDb>6?': looks like clock phase noise.':': normal.'}`);
+  if(NI.lowDb!=null)noiseLines.push(`At low frequency the floor is ${Math.abs(NI.lowDb).toFixed(1)} dB ${NI.lowDb>=0?'above':'below'} the overall floor${NI.lowDb>6?': looks like 1/f noise or slow drift.':': normal.'}`);
+  noiseLines.push('White clock jitter cannot be told apart from other white noise in one FFT. Measure at two input frequencies: if SNR gets worse as the input frequency rises, jitter is the cause.');
+  const noiseHTML=`<div class="card"><div class="card-h"><h3>Noise</h3><span class="hint">Computed after removing ${CA?'mismatch and ':''}sparkle codes</span></div><ul class="plain">${noiseLines.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
+  /* DNL */
+  let dnlHTML='';
+  if(!DL.skip){
+    dnlHTML=`<div class="card"><div class="card-h"><h3>DNL / INL (code histogram)</h3><span class="hint">Uncertainty about ±${DL.sigma.toFixed(2)} LSB</span></div>
+      <div class="mm"><div class="mm-h"><b>DNL</b><span>LSB, dashed = ±0.5</span></div><div class="chart-host" id="c-dnl"></div></div>
+      <div class="mm"><div class="mm-h"><b>INL</b><span>LSB, dashed = ±1</span></div><div class="chart-host" id="c-inl"></div></div>
+      <p class="hint">The horizontal axis is the output code (${DL.kLo} to ${DL.kHi}; codes too close to the top and bottom of the sine are left out). Each code appears about ${DL.hc.toFixed(0)} times on average; more is more accurate.${DL.missing.length?` Missing codes: ${DL.missing.slice(0,12).join(', ')}${DL.missing.length>12?' …':''}.`:''}</p></div>`;
+  }
+  /* spurs */
+  const gt=CA?(CA.fixes.t.sndr>CA.fixes.g.sndr?'timing skew':'gain'):null;
+  const causeOf=s=>{let t=causeText(s.cls,R);if(s.cls.type==='gain'&&CA)t+=` (here mostly ${gt})`;return t;};
+  const spRows=R.spurs.slice(0,8).map((s,i)=>`<tr><td>${i+1}</td><td>${esc(ff(s.k))}</td><td>${s.dbc.toFixed(1)}</td><td class="txt">${esc(causeOf(s))}</td></tr>`).join('');
+  const types=[...new Set(R.spurs.slice(0,4).map(s=>s.cls.type))];
+  const adv=types.map(t=>{const a=ADVICE[t];return `<div class="adv"><h4>${esc(a.t)}</h4><p>${esc(a.d)}</p><div><div class="sub">How to check / how to fix</div><ol>${a.fix.map(f=>`<li>${esc(f)}</li>`).join('')}</ol></div></div>`;}).join('');
+  const coh=isPrime(R.kf)?`The signal is in bin ${R.kf}, a prime, so coherent sampling is set up correctly.`:`The signal is in bin ${R.kf}, which is not a prime. For coherent sampling, set the input frequency to ${R.primeBin} × Fs / N = ${esc(ff(R.primeBin))}.`;
+
+  out.innerHTML=`
+  <div class="card">
+    <div class="card-h"><h3>Summary</h3><div class="row-btns"><button type="button" class="btn btn-sm" id="b-md">Copy report</button><button type="button" class="btn btn-sm" id="b-mddl">Download .md</button></div></div>
+    <p class="verdict">${v}</p>
+    <div class="stats">${tiles}</div>
+    ${notes.length?`<ul class="notes">${notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}
+    <ul class="find">${list}</ul>
+    <p class="hint">The dB figure on the right is how much SNDR improves if that one problem is fixed.</p>
+  </div>
+  ${fixHTML}
+  <div class="card">
+    <div class="card-h"><h3>Spectrum</h3><div class="legend"><span><i class="l-sig"></i>Signal</span><span><i class="l-fail"></i>Spurs (numbered in the table)</span>${R.M>1?`<span><i class="l-il"></i>k·Fs/${R.M}</span>`:''}</div></div>
+    <div class="chart-host" id="c-spec"></div>
+    <p class="hint">N = ${R.N}, ${WIN_NAME[R.win]} window. ${coh}</p>
+  </div>
+  ${chHTML}${spHTML}${noiseHTML}${dnlHTML}${sarWeightCard(A)}
+  ${R.spurs.length?`<div class="card"><div class="card-h"><h3>Largest spurs</h3><span class="hint">Causes are inferred from spur locations</span></div><div class="tbl-wrap"><table><thead><tr><th>#</th><th>Frequency</th><th>dBc</th><th>Likely cause</th></tr></thead><tbody>${spRows}</tbody></table></div></div>
+  <div class="advice">${adv}</div>`:''}`;
+  const sh=$('#c-spec');sh.innerHTML=spectrumSVG(R,hostW(sh));
+  if(CA){
+    const fmts={dc:t=>R.bits>0?(+t).toFixed(Math.abs(t)<10?1:0):fmt(t),dg:t=>(t*100).toFixed(2),dtTs:t=>R.fsOk?(t/R.Fs*1e12).toFixed(1):(+t).toFixed(3),noise:t=>R.bits>0?(+t).toFixed(2):fmt(t)};
+    const hotOf={dc:CA.wO.m,dg:CA.wG.m,dtTs:CA.wT.m,noise:CA.noisy.map(c=>c.m)};
+    $$('.mm-grid .chart-host',out).forEach(h=>{const k=h.dataset.k;h.innerHTML=barsSVG(CA.ch.map(c=>c[k]),hostW(h),fmts[k],hotOf[k],k==='noise');});
+    $('#b-csv').addEventListener('click',e=>copyText(csvText(),e.currentTarget));
+    $('#b-dl').addEventListener('click',e=>saveFile('adc_channel_mismatch.csv',csvText(),e.currentTarget,'text/csv'));
+  }
+  if(sparkle){const h=$('#c-res');const cap=Math.max(sparkle.thr*4,...sparkle.errs.map(Math.abs))*1.1;h.innerHTML=envSVG(A.resid,0,hostW(h),{H:140,guides:[sparkle.thr,-sparkle.thr],marks:sparkle.idx.map((n,i)=>({i:n,v:sparkle.errs[i],t:`Sample ${n}: ${fO(sparkle.errs[i])}`})),cap,fmt:t=>R.bits>0?(+t).toFixed(0):fmt(t),label:'Error'+(unitO?' ('+unitO+')':'')});}
+  if(!DL.skip){const h1=$('#c-dnl'),h2=$('#c-inl');h1.innerHTML=envSVG(DL.dnl,DL.kLo,hostW(h1),{bars:true,guides:[0.5,-0.5],fmt:t=>(+t).toFixed(1)});h2.innerHTML=envSVG(DL.inl,DL.kLo,hostW(h2),{line:true,guides:[1,-1],fmt:t=>(+t).toFixed(1)});}
+  $('#b-md').addEventListener('click',e=>copyText(mdText(),e.currentTarget));
+  sarWeightAfter(A,hostW,copyText);
+  $('#b-mddl').addEventListener('click',e=>saveFile('adc_diagnosis.md',mdText(),e.currentTarget,'text/markdown'));
+}
+function csvText(){
+  const {R0:R,CA}=state;
+  return `channel,offset_${R.bits>0?'LSB':'raw'},gain_error_pct,${R.fsOk?'skew_ps':'skew_Ts'},noise_rms\n`+CA.ch.map(c=>`${c.m},${c.dc.toFixed(4)},${(c.dg*100).toFixed(4)},${R.fsOk?(c.dt*1e12).toFixed(4):c.dtTs.toFixed(6)},${c.noise.toFixed(4)}`).join('\n')+'\n';
+}
+function mdText(){
+  const A=state,{R0:R,CA,items}=A;const ff=k=>R.fsOk?fmt(k*R.Fs/R.N)+'Hz':(k/R.N).toFixed(4)+'·Fs';
+  const L=['## ADC diagnosis','',`- N = ${R.N}${R.fsOk?`, Fs = ${fmt(R.Fs)}Hz`:''}${R.M>1?`, M = ${R.M}`:''}, ${WIN_NAME[R.win]} window, fin ≈ ${ff(R.kf)}`,'',
+    '| SNDR | SFDR | ENOB | THD | SNR |','|---:|---:|---:|---:|---:|',`| ${R.sndr.toFixed(1)} dB | ${fin(R.sfdr)?R.sfdr.toFixed(1)+' dBc':'—'} | ${R.enob.toFixed(2)} bit | ${fin(R.thd)?R.thd.toFixed(1)+' dBc':'—'} | ${R.snr.toFixed(1)} dB |`,'','Findings:'];
+  items.forEach(i=>L.push(`- **${SEVTXT[i.sev]}** ${i.title}: ${i.text}${i.gain!=null&&i.gain>=0.1?` (fixing it: +${i.gain.toFixed(1)} dB)`:''}`));
+  if(CA){L.push('','| Channel | Offset | Gain error | Timing skew | Noise rms |','|---:|---:|---:|---:|---:|');CA.ch.forEach(c=>L.push(`| ${c.m} | ${c.dc.toFixed(2)} | ${pctS(c.dg)} | ${R.fsOk?(c.dt*1e12).toFixed(2)+' ps':c.dtTs.toFixed(4)+' Ts'} | ${c.noise.toFixed(2)} |`));}
+  if(R.spurs.length){L.push('','| # | Frequency | dBc | Likely cause |','|---:|---:|---:|---|');R.spurs.slice(0,8).forEach((s,i)=>L.push(`| ${i+1} | ${ff(s.k)} | ${s.dbc.toFixed(1)} | ${causeText(s.cls,R)} |`));}
+  return L.join('\n')+'\n';
+}
+
+/* ---------- init ---------- */
+function setSample(on){store.set('sample',on);$('#d-badge').hidden=!on;}
+const ta=$('#d-text');
+const t0=store.get('text',null);ta.value=t0!=null?t0:sampleTI();setSample(t0==null?true:store.get('sample',true));
+const p0=Object.assign({},DEFAULT_P,store.get('params',{}));P_IDS.forEach(k=>{$('#p-'+k).value=p0[k];});
+const PRE=window.ADC_PRELOAD;
+if(PRE&&PRE.data){ta.value=Array.isArray(PRE.data)?PRE.data.join('\n'):String(PRE.data);P_IDS.forEach(k=>{if(PRE[k]!=null&&PRE[k]!=='')$('#p-'+k).value=String(PRE[k]);});const b=$('#d-badge');b.textContent='From Virtuoso';b.title=PRE.source||'';b.hidden=false;}
+const update=()=>{compute();render();};
+const later=debounce(update,350);
+const load=txt=>{ta.value=txt;setSample(false);store.set('text',txt);update();};
+ta.addEventListener('input',()=>{setSample(false);store.set('text',ta.value);later();});
+$('#d-file').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f){const r=new FileReader();r.onload=()=>load(String(r.result||''));r.onerror=()=>toast('Could not read this file');r.readAsText(f);}e.target.value='';});
+ta.addEventListener('dragover',e=>{e.preventDefault();ta.classList.add('drag');});
+ta.addEventListener('dragleave',()=>ta.classList.remove('drag'));
+ta.addEventListener('drop',e=>{const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(!f)return;e.preventDefault();ta.classList.remove('drag');const r=new FileReader();r.onload=()=>load(String(r.result||''));r.readAsText(f);});
+$('#d-load').addEventListener('click',()=>{const s=sampleTI();ta.value=s;store.set('text',s);setSample(true);P_IDS.forEach(k=>{$('#p-'+k).value=DEFAULT_P[k];});update();});
+$('#p-form').addEventListener('input',later);$('#p-form').addEventListener('change',later);
+window.addEventListener('resize',debounce(render,200));
+initCapModel(store,()=>params().bits);
+update();
+})();
+</script>
+</body>
+</html>
